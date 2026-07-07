@@ -12,7 +12,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/common/hlog"
 )
 
-// syncPrimeChatRooms 遍历聊天室，调用 GetPrimeChatRoom 获取背景图
+// syncPrimeChatRooms 调用 GetPrimeChatRoom 获取背景图
 func syncPrimeChatRooms() error {
 	now := time.Now()
 
@@ -29,7 +29,7 @@ func syncPrimeChatRooms() error {
 	return syncPrimeChatRoomsPerRoom(now)
 }
 
-// syncPrimeChatRoomsPerRoom 对每个聊天室逐一调用 GetPrimeChatRoom
+// syncPrimeChatRoomsPerRoom 逐一调用 GetPrimeChatRoom
 func syncPrimeChatRoomsPerRoom(now time.Time) error {
 	chatRooms, err := dal.GetChatRooms()
 	if err != nil {

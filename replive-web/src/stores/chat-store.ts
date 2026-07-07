@@ -55,7 +55,6 @@ interface ChatState {
   clearJumpTarget: () => void;
   requestScrollToBottom: () => Promise<void>;
   sendMessage: (content: string) => Promise<void>;
-  pollNewMessages: (room?: ChatRoom) => Promise<void>;
   clearSearch: () => void;
 }
 
@@ -210,14 +209,7 @@ const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     if (!get().messagesByRoom[key]) {
-      // 这个房间从没加载过，拉一页最新的。
       await get().loadLatestMessages(room);
-    } else {
-      // 这个房间之前已经有快照了（可能是之前选中过，也可能是 jumpToMessage
-      // 留下的、以某条消息为中心的窄窗口），不能假设它就是最新的——
-      // 增量补一次比已知最大 id 更新的消息，避免重新切回来时看不到中途
-      // 漏掉的新消息。
-      await get().pollNewMessages(room);
     }
   },
 

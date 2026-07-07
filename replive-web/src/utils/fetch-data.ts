@@ -147,7 +147,6 @@ function sortMessagesAsc(messages: Message[]) {
 export async function fetchChatRooms(): Promise<ChatRoom[]> {
   const response = await axios.get<ApiResponse<BackendChatRoom[]>>(
     "/api/chat/rooms",
-    { cache: false } satisfies CacheRequestConfig,
   );
   return unwrapResponse(response.data).map(mapChatRoom);
 }
@@ -163,7 +162,6 @@ export async function fetchChatMessages({
   const response = await axios.get<ApiResponse<BackendMessagesPage>>(
     "/api/chat/messages",
     {
-      cache: false,
       params: {
         display_name: displayName,
         page_size: pageSize,
@@ -201,7 +199,6 @@ export async function searchChatMessages({
   const response = await axios.get<ApiResponse<BackendMessagesPage>>(
     "/api/chat/search",
     {
-      cache: false,
       params: {
         display_name: displayName,
         keyword,

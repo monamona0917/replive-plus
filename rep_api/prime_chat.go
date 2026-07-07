@@ -20,7 +20,6 @@ type PrimeChatRoom struct {
 	MemberProfileImageUrl    string
 }
 
-// ListPrimeChatRooms 列出我加入的所有 Prime Chat 房间
 func ListPrimeChatRooms() ([]*PrimeChatRoom, error) {
 	// ListPrimeChatRoomsRequest { max_page_size = 1: 100 }
 	reqBuf := protowire.AppendVarint(
@@ -67,7 +66,7 @@ func ListPrimeChatRooms() ([]*PrimeChatRoom, error) {
 	return rooms, nil
 }
 
-// GetPrimeChatRoom 获取指定主播的 Prime Chat 房间信息
+// GetPrimeChatRoom 获取指定Prime Chat 房间信息
 func GetPrimeChatRoom(talentUserId string) (*PrimeChatRoom, error) {
 	// 手动编码 GetPrimeChatRoomRequest { talent_user_id = 1: talentUserId }
 	reqBuf := protowire.AppendString(
