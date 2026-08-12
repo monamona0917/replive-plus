@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Replive+ - 独立交互预览</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            background: 'var(--background)',
+            foreground: 'var(--foreground)',
+            card: 'var(--card)',
+            'card-foreground': 'var(--card-foreground)',
+            primary: 'var(--primary)',
+            'primary-foreground': 'var(--primary-foreground)',
+            muted: 'var(--muted)',
+            'muted-foreground': 'var(--muted-foreground)',
+            border: 'var(--border)',
+            sidebar: 'var(--sidebar)',
+            'sidebar-foreground': 'var(--sidebar-foreground)',
+            'sidebar-border': 'var(--sidebar-border)',
+            'sidebar-accent': 'var(--sidebar-accent)',
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    :root {
+      --background: #f8fafc;
+      --foreground: #0f172a;
+      --card: #ffffff;
+      --card-foreground: #0f172a;
+      --primary: #4f46e5;
+      --primary-foreground: #ffffff;
+      --muted: #f1f5f9;
+      --muted-foreground: #64748b;
+      --border: #e2e8f0;
+      --sidebar: #f8fafc;
+      --sidebar-foreground: #1e293b;
+      --sidebar-border: #e2e8f0;
+      --sidebar-accent: #e0e7ff;
+      --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .dark {
+      --background: #0b0e14;
+      --foreground: #f1f5f9;
+      --card: #151a23;
+      --card-foreground: #f1f5f9;
+      --primary: #6366f1;
+      --primary-foreground: #ffffff;
+      --muted: #1e2533;
+      --muted-foreground: #94a3b8;
+      --border: #232b3b;
+      --sidebar: #0f131a;
+      --sidebar-foreground: #f1f5f9;
+      --sidebar-border: #1e2533;
+      --sidebar-accent: #232b3b;
+    }
+    body {
+      font-family: var(--font-sans);
+    }
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(150, 150, 150, 0.25);
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(150, 150, 150, 0.45);
+    }
+    @keyframes target-pulse {
+      0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.6); }
+      40% { transform: scale(1.02); box-shadow: 0 0 0 10px rgba(99, 102, 241, 0); }
+      100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+    }
+    .msg-jump-highlight {
+      animation: target-pulse 1.8s ease-out;
+      background-color: rgba(99, 102, 241, 0.12);
+    }
+  </style>
+</head>
+<body class="bg-background text-foreground h-screen w-screen overflow-hidden flex flex-col antialiased select-none">
+  <!-- Watermark (Forced Active) -->
+  <div id="watermark-layer" class="pointer-events-none fixed inset-0 z-40 overflow-hidden"></div>
+
+  <!-- Main Container -->
+  <div class="flex-1 flex overflow-hidden relative">
+    <!-- Sidebar -->
+    <aside id="sidebar" class="w-80 bg-sidebar border-r border-sidebar-border flex flex-col transition-all duration-300 z-30">
+      <!-- Header: Only Replive+ text -->
+      <div class="flex items-center justify-between px-4 py-3.5 border-b border-sidebar-border">
+        <span class="font-bold text-base text-foreground tracking-tight">Replive+</span>
+        <button id="btn-theme" class="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors" title="切换深色/浅色模式">
+          <i data-lucide="moon" class="w-4 h-4 text-primary"></i>
+        </button>
+      </div>
+
+      <!-- Zone Switcher -->
+      <div class="p-3 pb-1">
+        <div class="grid grid-cols-2 gap-1 p-1 bg-muted rounded-xl border border-border/50 text-xs font-medium">
+          <button id="tab-fandom" onclick="switchCategory('fandom')" class="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg bg-card text-foreground font-semibold shadow-sm transition-all">
+            <img src="./public/icons/fandom.svg" class="w-3.5 h-4 object-contain" alt="Fandom" />
+            <span>Fandom</span>
+            <span id="badge-fandom" class="ml-0.5 px-1.5 py-0.2 text-[10px] rounded-full bg-muted text-muted-foreground">2</span>
+          </button>
+          <button id="tab-prime" onclick="switchCategory('prime')" class="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg text-muted-foreground hover:text-foreground transition-all">
+            <img src="./public/icons/prime-chat.svg" class="w-3.5 h-3.5 object-contain" alt="Prime Chat" />
+            <span>Prime Chat</span>
+            <span id="badge-prime" class="ml-0.5 px-1.5 py-0.2 text-[10px] rounded-full bg-muted text-muted-foreground">3</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Room List -->
+      <div id="room-list" class="flex-1 overflow-y-auto p-2 space-y-1"></div>
+
+      <!-- Footer Profile -->
+      <div class="p-3 border-t border-sidebar-border bg-sidebar/80 flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <img src="https://api.dicebear.com/7.x/bottts/svg?seed=admin_avatar" class="w-8 h-8 rounded-full bg-muted ring-1 ring-border" alt="用户" />
+          <div>
+            <div class="text-xs font-semibold text-foreground">モナ</div>
+            <div class="text-[10px] text-muted-foreground font-mono">@mona_subscriber</div>
+          </div>
+        </div>
+        <!-- About Button -->
+        <button onclick="toggleAboutModal(true)" class="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors" title="关于 Replive+">
+          <i data-lucide="info" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Chat Area -->
+    <main class="flex-1 flex flex-col h-full bg-background relative overflow-hidden">
+      <!-- Chat Header -->
+      <header class="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-border/60 bg-background/90 backdrop-blur-md sticky top-0 z-20">
+        <div class="flex items-center gap-3">
+          <img id="chat-avatar" src="" class="w-9 h-9 rounded-full object-cover ring-1 ring-border bg-muted" alt="头像" />
+          <div>
+            <h1 id="chat-title" class="text-sm font-bold text-foreground truncate max-w-[200px] sm:max-w-[300px]"></h1>
+            <span id="chat-subtitle" class="text-[11px] text-muted-foreground font-mono"></span>
+          </div>
+        </div>
+
+        <!-- Action buttons -->
+        <div class="flex items-center gap-1">
+          <button onclick="toggleGalleryDrawer(true)" class="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="相册">
+            <i data-lucide="images" class="w-4 h-4"></i>
+          </button>
+          <button onclick="toggleSearchDrawer(true)" class="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="全文搜索">
+            <i data-lucide="search" class="w-4 h-4"></i>
+          </button>
+          <button onclick="toggleDateJumpModal(true)" class="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="日期跳转">
+            <i data-lucide="calendar-days" class="w-4 h-4"></i>
+          </button>
+          <button onclick="scrollToBottom()" class="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="滑动到底部">
+            <i data-lucide="arrow-down-to-line" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </header>
+
+      <!-- Message Stream -->
+      <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-4 max-w-4xl w-full mx-auto"></div>
+
+      <!-- Chat Input -->
+      <footer class="border-t border-border/60 bg-background/80 backdrop-blur-md px-4 py-3">
+        <div class="flex items-center gap-2 max-w-4xl mx-auto">
+          <input id="message-input" type="text" placeholder="输入消息并按 Enter 发送..." onkeydown="if(event.key==='Enter')sendMessage()" class="flex-1 px-4 py-2.5 text-sm bg-card border border-border rounded-xl outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/60" />
+          <button onclick="sendMessage()" class="p-2.5 rounded-xl bg-primary text-primary-foreground hover:opacity-90 active:scale-95 transition-all shadow-sm">
+            <i data-lucide="send-horizontal" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  <!-- Search Drawer -->
+  <div id="search-drawer" class="fixed inset-0 z-50 overflow-hidden hidden">
+    <div class="fixed inset-0 bg-black/50 backdrop-blur-xs" onclick="toggleSearchDrawer(false)"></div>
+    <div class="fixed inset-y-0 right-0 w-full sm:w-96 bg-card border-l border-border shadow-2xl flex flex-col z-50">
+      <div class="flex items-center justify-between px-4 py-3.5 border-b border-border">
+        <div class="flex items-center gap-2">
+          <i data-lucide="search" class="w-4 h-4 text-primary"></i>
+          <h3 class="text-sm font-bold text-foreground">全文关键词检索</h3>
+        </div>
+        <button onclick="toggleSearchDrawer(false)" class="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+      <div class="p-3 border-b border-border/60">
+        <input id="drawer-search-input" type="text" placeholder="输入关键词实时搜索..." oninput="onSearchMessages(this.value)" class="w-full px-3 py-2 text-xs bg-muted/60 border border-border rounded-xl outline-none focus:border-primary" />
+      </div>
+      <div id="search-results" class="flex-1 overflow-y-auto p-2 space-y-1.5"></div>
+    </div>
+  </div>
+
+  <!-- Gallery Drawer (相册) -->
+  <div id="gallery-drawer" class="fixed inset-0 z-50 overflow-hidden hidden">
+    <div class="fixed inset-0 bg-black/50 backdrop-blur-xs" onclick="toggleGalleryDrawer(false)"></div>
+    <div class="fixed inset-y-0 right-0 w-full sm:w-[460px] bg-card border-l border-border shadow-2xl flex flex-col z-50">
+      <div class="flex items-center justify-between px-4 py-3.5 border-b border-border">
+        <div class="flex items-center gap-2">
+          <i data-lucide="images" class="w-4 h-4 text-primary"></i>
+          <h3 class="text-sm font-bold text-foreground">相册</h3>
+        </div>
+        <button onclick="toggleGalleryDrawer(false)" class="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+      <div id="gallery-grid" class="flex-1 overflow-y-auto p-3 grid grid-cols-3 gap-2"></div>
+    </div>
+  </div>
+
+  <!-- Date Jump Calendar Modal -->
+  <div id="date-jump-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm hidden">
+    <div class="w-full max-w-sm bg-card border border-border rounded-2xl shadow-2xl p-5 relative">
+      <button onclick="toggleDateJumpModal(false)" class="absolute right-4 top-4 p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+      <div class="flex items-center gap-2.5 mb-4">
+        <div class="p-2 rounded-xl bg-primary/15 text-primary">
+          <i data-lucide="calendar" class="w-4 h-4"></i>
+        </div>
+        <h2 class="text-base font-bold text-foreground">日期跳转</h2>
+      </div>
+      <div class="p-3.5 rounded-xl bg-muted/30 border border-border/60">
+        <div class="flex items-center justify-between mb-3 px-1">
+          <button onclick="changeCalendarMonth(-1)" class="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted">
+            <i data-lucide="chevron-left" class="w-4 h-4"></i>
+          </button>
+          <span id="cal-month-label" class="text-sm font-bold text-foreground font-mono">2026年 08月</span>
+          <button onclick="changeCalendarMonth(1)" class="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted">
+            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+          </button>
+        </div>
+        <div class="grid grid-cols-7 gap-1 text-center mb-1.5 text-[11px] font-semibold text-muted-foreground">
+          <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+        </div>
+        <div id="cal-grid" class="grid grid-cols-7 gap-1"></div>
+      </div>
+      <div class="mt-3 flex items-center justify-between text-[11px] text-muted-foreground px-1">
+        <div class="flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-primary"></span>
+          <span>高亮日期包含历史消息</span>
+        </div>
+        <span id="cal-count-label" class="font-mono">共 3 天记录</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lightbox Modal -->
+  <div id="lightbox-modal" class="fixed inset-0 z-50 bg-black/92 backdrop-blur-xl flex flex-col text-white hidden">
+    <div class="flex items-center justify-between px-6 py-3.5 bg-black/40 border-b border-white/10">
+      <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-white/15">全屏预览</span>
+      <button onclick="closeLightbox()" class="p-2 rounded-xl text-white/70 hover:text-white hover:bg-white/15">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+    </div>
+    <div class="flex-1 flex items-center justify-center p-8">
+      <img id="lightbox-img" src="" class="max-w-[90vw] max-h-[82vh] object-contain rounded-lg shadow-2xl" alt="全屏图" />
+    </div>
+  </div>
+
+  <!-- About Modal with Openable GitHub Links -->
+  <div id="about-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm hidden">
+    <div class="w-full max-w-md bg-card border border-border rounded-2xl shadow-2xl p-6 relative">
+      <button onclick="toggleAboutModal(false)" class="absolute right-4 top-4 p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+      <div class="flex items-center gap-2.5 mb-5">
+        <div class="p-2 rounded-xl bg-primary/15 text-primary">
+          <i data-lucide="info" class="w-5 h-5"></i>
+        </div>
+        <h2 class="text-base font-bold text-foreground">关于 Replive+</h2>
+      </div>
+      <div class="space-y-4">
+        <div class="p-4 rounded-xl bg-muted/40 border border-border space-y-3 text-xs">
+          <p class="text-muted-foreground font-medium">本项目基于以下项目进行二次开发/重构筑：</p>
+          <div class="space-y-2">
+            <a href="https://github.com/Chilfish/replive-oyu" target="_blank" rel="noopener noreferrer" class="flex items-center justify-between p-2.5 rounded-lg bg-card border border-border/70 text-foreground hover:text-primary hover:border-primary/50 transition-all font-medium group">
+              <span>Chilfish/replive-oyu</span>
+              <i data-lucide="external-link" class="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary"></i>
+            </a>
+            <a href="https://github.com/huangwg2529/nsy_chat_live" target="_blank" rel="noopener noreferrer" class="flex items-center justify-between p-2.5 rounded-lg bg-card border border-border/70 text-foreground hover:text-primary hover:border-primary/50 transition-all font-medium group">
+              <span>huangwg2529/nsy_chat_live</span>
+              <i data-lucide="external-link" class="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary"></i>
+            </a>
+          </div>
+        </div>
+      </div>
+      <div class="mt-6 flex justify-end">
+        <button onclick="toggleAboutModal(false)" class="px-5 py-2 rounded-xl text-xs font-semibold bg-primary text-primary-foreground">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mock Data & Script -->
+  <script>
+    const MOCK_ROOMS = [
+      { id: 1, userId: "fandom_main_01", chatRoomId: "room_fandom_live", displayName: "Fandom 频道", avatarUrl: "https://api.dicebear.com/7.x/shapes/svg?seed=fandom_star", category: "fandom", lastMessageTime: "2026-08-10 11:55:00", lastMessageContent: "欢迎来到 Fandom 聊天记录归档大厅！" },
+      { id: 2, userId: "fandom_channel_02", chatRoomId: "room_fandom_announcements", displayName: "Fandom 公告与精选", avatarUrl: "https://api.dicebear.com/7.x/shapes/svg?seed=fandom_bell", category: "fandom", lastMessageTime: "2026-08-10 09:30:00", lastMessageContent: "本周直播回放与高光切片已同步。" },
+      { id: 3, userId: "prime_user_yukimura", chatRoomId: "room_prime_yukimura", displayName: "幸村恵理", avatarUrl: "https://api.dicebear.com/7.x/adventurer/svg?seed=Yukimura", category: "prime", lastMessageTime: "2026-08-08 18:10:53", lastMessageContent: "あと夜はスイカ食べる！" },
+      { id: 4, userId: "prime_user_hikari", chatRoomId: "room_prime_hikari", displayName: "光 (Hikari Prime)", avatarUrl: "https://api.dicebear.com/7.x/adventurer/svg?seed=Hikari", category: "prime", lastMessageTime: "2026-08-10 10:00:00", lastMessageContent: "非常感谢大家的信件与打赏！" },
+      { id: 5, userId: "prime_user_kuro", chatRoomId: "room_prime_kuro", displayName: "Kuro (Prime 专属)", avatarUrl: "https://api.dicebear.com/7.x/adventurer/svg?seed=Kuro", category: "prime", lastMessageTime: "2026-08-09 23:45:00", lastMessageContent: "明天见，晚安！" }
+    ];
+
+    const MOCK_MESSAGES = {
+      room_prime_yukimura: [
+        { id: "y1", senderName: "幸村恵理", content: "ご飯何食べた？\nもしくは何食べる？", type: "text", createdAt: "2026-08-08 13:03:18" },
+        { id: "y2", senderName: "幸村恵理", content: "お魚食べたかったから鯵のお造り買った！\nちょっち生臭かったからなめろうで食べたぜ\n\n('ч')", type: "text", createdAt: "2026-08-08 15:00:16" },
+        { id: "y3", senderName: "幸村恵理", content: "なめろうにして、だね", type: "text", createdAt: "2026-08-08 15:00:26" },
+        { id: "y4", senderName: "幸村恵理", content: "今日の写真！", type: "image", mediaUrl: "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800&auto=format&fit=crop&q=80", createdAt: "2026-08-08 15:05:00" },
+        { id: "y5", senderName: "モナ", content: "えっとー中華…料理？今日は台風で外に出なかったから、デリバリー頼んだ 回鍋肉ともやし炒め？を食べた😋", type: "text", createdAt: "2026-08-08 18:06:29" },
+        { id: "y6", senderName: "モナ", content: "なめろう…えー初めて聞いた料理ね、ちょっと調べてみたら牛肉のタルタルみたいな感じなのかな？暑い日にぴったりそう", type: "text", createdAt: "2026-08-08 18:07:56" },
+        { id: "y7", senderName: "モナ", content: "あと夜はスイカ食べる！金曜の仕事帰りに買って、冷蔵庫で一日冷やしておいたやつ😋", type: "text", createdAt: "2026-08-08 18:10:53" }
+      ],
+      room_fandom_live: [
+        { id: "m1", senderName: "Fandom Host", content: "【DB 归档记录】Fandom 历史会话数据库载入成功。", type: "text", createdAt: "2026-08-08 10:00:00" },
+        { id: "m2", senderName: "Fandom Host", content: "系统支持向上滚动无缝加载更早历史，支持日期快速穿越。", type: "text", createdAt: "2026-08-08 10:05:00" },
+        { id: "m3", senderName: "モナ", content: "收到！已经能正常查阅历史记录和图片视频了。", type: "text", createdAt: "2026-08-08 10:10:00" },
+        { id: "m4", senderName: "Fandom Host", content: "今天的天气真不错，分享一张现场照片给大家！", type: "image", mediaUrl: "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800&auto=format&fit=crop&q=80", createdAt: "2026-08-09 10:15:00" },
+        { id: "m5", senderName: "Fandom Host", content: "今日も一日お疲れ様でした！明日も頑張りましょう。", type: "text", createdAt: "2026-08-09 11:00:00" },
+        { id: "m6", senderName: "モナ", content: "辛苦了！期待下一次精彩内容。", type: "text", createdAt: "2026-08-09 11:20:00" },
+        { id: "m7", senderName: "Fandom Host", content: "最新一条同步消息：欢迎使用 Replive+ 重构版！", type: "text", createdAt: "2026-08-10 11:55:00" }
+      ]
+    };
+
+    let currentCategory = "prime";
+    let selectedRoom = MOCK_ROOMS[2]; // 幸村恵理
+    let calYear = 2026;
+    let calMonth = 7; // 0-indexed: 7 is August
+
+    function updateWatermark() {
+      const isDark = document.documentElement.classList.contains("dark");
+      const fillHex = isDark ? "%23FFFFFF" : "%23000000";
+      const text = `${selectedRoom.displayName} · Replive+`;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="280" height="180"><text x="50%" y="50%" fill="${fillHex}" fill-opacity="0.12" font-family="sans-serif" font-size="14" font-weight="600" text-anchor="middle" dominant-baseline="middle" transform="rotate(-22 140 90)">${text}</text></svg>`;
+      document.getElementById("watermark-layer").style.backgroundImage = `url("data:image/svg+xml;utf8,${svg}")`;
+    }
+
+    function renderRooms() {
+      const list = MOCK_ROOMS.filter(r => r.category === currentCategory);
+      const container = document.getElementById("room-list");
+      container.innerHTML = list.map(r => {
+        const isSelected = selectedRoom.chatRoomId === r.chatRoomId;
+        return `
+          <button onclick="selectRoom('${r.chatRoomId}')" class="w-full flex items-center gap-3 p-2.5 rounded-xl text-left transition-all ${isSelected ? 'bg-indigo-500/10 text-primary font-medium ring-1 ring-primary/20' : 'text-foreground/80 hover:bg-muted'}">
+            <img src="${r.avatarUrl}" class="w-10 h-10 rounded-full object-cover bg-muted ring-1 ring-border shrink-0" />
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between gap-1 mb-0.5">
+                <span class="text-xs font-semibold text-foreground truncate">${r.displayName}</span>
+                <span class="text-[10px] text-muted-foreground font-mono">${r.lastMessageTime.slice(11, 16)}</span>
+              </div>
+              <p class="text-[11px] text-muted-foreground truncate">${r.lastMessageContent}</p>
+            </div>
+          </button>
+        `;
+      }).join("");
+    }
+
+    function renderMessages() {
+      const msgs = MOCK_MESSAGES[selectedRoom.chatRoomId] || [];
+      const container = document.getElementById("chat-messages");
+
+      document.getElementById("chat-avatar").src = selectedRoom.avatarUrl;
+      document.getElementById("chat-title").innerText = selectedRoom.displayName;
+      document.getElementById("chat-subtitle").innerText = selectedRoom.chatRoomId;
+
+      // Group messages by date
+      const groups = {};
+      msgs.forEach(m => {
+        const date = m.createdAt.slice(0, 10);
+        if (!groups[date]) groups[date] = [];
+        groups[date].push(m);
+      });
+
+      let html = "";
+      for (const [date, dateMsgs] of Object.entries(groups)) {
+        html += `
+          <div class="w-full mb-6">
+            <div class="w-full flex justify-center my-3 select-none">
+              <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium text-muted-foreground bg-muted/80 backdrop-blur-md border border-border/40 shadow-xs">
+                <i data-lucide="calendar" class="w-3 h-3 text-primary"></i>
+                <span>${date}</span>
+              </div>
+            </div>
+            <div class="flex flex-col gap-2 w-full">
+              ${dateMsgs.map(m => {
+                const isMine = m.senderName !== selectedRoom.displayName;
+                return `
+                  <div id="msg-${m.id}" class="flex items-start gap-3 py-1 px-2 transition-all rounded-xl ${isMine ? 'flex-row-reverse' : 'flex-row'}">
+                    <img src="${isMine ? 'https://api.dicebear.com/7.x/bottts/svg?seed=admin_avatar' : selectedRoom.avatarUrl}" class="w-9 h-9 rounded-full object-cover ring-1 ring-border bg-muted shrink-0" />
+                    <div class="flex flex-col max-w-[75%] ${isMine ? 'items-end' : 'items-start'}">
+                      <div class="flex items-center gap-2 mb-1 text-xs text-muted-foreground ${isMine ? 'flex-row-reverse' : 'flex-row'}">
+                        <span class="font-semibold text-foreground">${m.senderName}</span>
+                        <span class="text-[11px] font-mono">${m.createdAt.slice(11, 19)}</span>
+                      </div>
+                      <div class="rounded-2xl px-3.5 py-2.5 shadow-xs ${isMine ? 'bg-primary text-primary-foreground rounded-tr-xs' : 'bg-card text-card-foreground border border-border rounded-tl-xs'}">
+                        ${m.type === 'text' ? `<p class="text-sm leading-relaxed whitespace-pre-wrap break-words">${m.content}</p>` : ''}
+                        ${m.type === 'image' ? `<img src="${m.mediaUrl}" onclick="openLightbox('${m.mediaUrl}')" class="max-w-[300px] rounded-xl cursor-pointer hover:scale-[1.02] transition-transform" />` : ''}
+                      </div>
+                    </div>
+                  </div>
+                `;
+              }).join("")}
+            </div>
+          </div>
+        `;
+      }
+
+      container.innerHTML = html;
+      updateWatermark();
+      lucide.createIcons();
+    }
+
+    function renderCalendar() {
+      const msgs = MOCK_MESSAGES[selectedRoom.chatRoomId] || [];
+      const activeDates = Array.from(new Set(msgs.map(m => m.createdAt.slice(0, 10))));
+      
+      const monthStr = `${calYear}年 ${String(calMonth + 1).padStart(2, '0')}月`;
+      document.getElementById("cal-month-label").innerText = monthStr;
+      document.getElementById("cal-count-label").innerText = `共 ${activeDates.length} 天记录`;
+
+      const firstDay = new Date(calYear, calMonth, 1).getDay();
+      const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+
+      let gridHtml = "";
+      for (let i = 0; i < firstDay; i++) {
+        gridHtml += `<div class="aspect-square opacity-10"></div>`;
+      }
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dStr = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const hasChat = activeDates.includes(dStr);
+        gridHtml += `
+          <button onclick="${hasChat ? `jumpToCalendarDate('${dStr}')` : ''}" ${!hasChat ? 'disabled' : ''} class="relative aspect-square flex flex-col items-center justify-center rounded-xl text-xs transition-all font-mono ${hasChat ? 'bg-primary/20 text-primary border border-primary/50 font-bold hover:bg-primary hover:text-white cursor-pointer active:scale-95 shadow-xs' : 'opacity-20 text-muted-foreground cursor-not-allowed pointer-events-none'}">
+            <span>${d}</span>
+            ${hasChat ? '<span class="w-1 h-1 rounded-full bg-primary mt-0.5"></span>' : ''}
+          </button>
+        `;
+      }
+      document.getElementById("cal-grid").innerHTML = gridHtml;
+    }
+
+    function changeCalendarMonth(delta) {
+      calMonth += delta;
+      if (calMonth < 0) { calMonth = 11; calYear--; }
+      if (calMonth > 11) { calMonth = 0; calYear++; }
+      renderCalendar();
+    }
+
+    function jumpToCalendarDate(dateStr) {
+      toggleDateJumpModal(false);
+      alert(`已成功穿梭至 ${dateStr} 的历史聊天记录！`);
+    }
+
+    function switchCategory(cat) {
+      currentCategory = cat;
+      document.getElementById("tab-fandom").className = cat === 'fandom' 
+        ? "flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg bg-card text-foreground font-semibold shadow-sm transition-all"
+        : "flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg text-muted-foreground hover:text-foreground transition-all";
+      document.getElementById("tab-prime").className = cat === 'prime'
+        ? "flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg bg-card text-foreground font-semibold shadow-sm transition-all"
+        : "flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg text-muted-foreground hover:text-foreground transition-all";
+      
+      const first = MOCK_ROOMS.find(r => r.category === cat);
+      if (first) selectedRoom = first;
+      renderRooms();
+      renderMessages();
+    }
+
+    function selectRoom(roomId) {
+      const found = MOCK_ROOMS.find(r => r.chatRoomId === roomId);
+      if (found) {
+        selectedRoom = found;
+        renderRooms();
+        renderMessages();
+        scrollToBottom();
+      }
+    }
+
+    function sendMessage() {
+      const input = document.getElementById("message-input");
+      const text = input.value.trim();
+      if (!text) return;
+      if (!MOCK_MESSAGES[selectedRoom.chatRoomId]) {
+        MOCK_MESSAGES[selectedRoom.chatRoomId] = [];
+      }
+      MOCK_MESSAGES[selectedRoom.chatRoomId].push({
+        id: `m_${Date.now()}`,
+        senderName: "モナ",
+        content: text,
+        type: "text",
+        createdAt: new Date().toISOString().replace('T', ' ').slice(0, 19)
+      });
+      input.value = "";
+      renderMessages();
+      scrollToBottom();
+    }
+
+    function scrollToBottom() {
+      const container = document.getElementById("chat-messages");
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function openLightbox(url) {
+      document.getElementById("lightbox-img").src = url;
+      document.getElementById("lightbox-modal").classList.remove("hidden");
+    }
+
+    function closeLightbox() {
+      document.getElementById("lightbox-modal").classList.add("hidden");
+    }
+
+    function toggleSearchDrawer(open) {
+      document.getElementById("search-drawer").classList.toggle("hidden", !open);
+      if (open) {
+        document.getElementById("drawer-search-input").focus();
+        onSearchMessages("");
+      }
+    }
+
+    function onSearchMessages(query) {
+      const msgs = MOCK_MESSAGES[selectedRoom.chatRoomId] || [];
+      const filtered = query.trim() ? msgs.filter(m => m.content.toLowerCase().includes(query.toLowerCase())) : msgs;
+      const resContainer = document.getElementById("search-results");
+      resContainer.innerHTML = filtered.map(m => `
+        <button onclick="jumpToMessage('${m.id}')" class="w-full p-2.5 rounded-xl border border-border/50 bg-muted/20 hover:bg-muted text-left">
+          <div class="flex justify-between text-[11px] mb-1">
+            <span class="font-semibold text-foreground">${m.senderName}</span>
+            <span class="text-muted-foreground font-mono">${m.createdAt.slice(11, 16)}</span>
+          </div>
+          <p class="text-xs text-foreground/80 line-clamp-2">${m.content}</p>
+        </button>
+      `).join("");
+    }
+
+    function jumpToMessage(msgId) {
+      toggleSearchDrawer(false);
+      const el = document.getElementById(`msg-${msgId}`);
+      if (el) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        el.classList.add("msg-jump-highlight");
+        setTimeout(() => el.classList.remove("msg-jump-highlight"), 2000);
+      }
+    }
+
+    function toggleGalleryDrawer(open) {
+      document.getElementById("gallery-drawer").classList.toggle("hidden", !open);
+      if (open) {
+        const msgs = MOCK_MESSAGES[selectedRoom.chatRoomId] || [];
+        const media = msgs.filter(m => m.type === "image");
+        document.getElementById("gallery-grid").innerHTML = media.map(m => `
+          <img src="${m.mediaUrl}" onclick="openLightbox('${m.mediaUrl}')" class="aspect-square rounded-xl object-cover cursor-pointer hover:scale-105 transition-transform" />
+        `).join("");
+      }
+    }
+
+    function toggleAboutModal(open) {
+      document.getElementById("about-modal").classList.toggle("hidden", !open);
+    }
+
+    function toggleDateJumpModal(open) {
+      document.getElementById("date-jump-modal").classList.toggle("hidden", !open);
+      if (open) {
+        renderCalendar();
+      }
+    }
+
+    function setThemeMode(isDark) {
+      document.documentElement.classList.toggle("dark", isDark);
+      document.getElementById("btn-theme").innerHTML = isDark ? `<i data-lucide="sun" class="w-4 h-4 text-amber-500"></i>` : `<i data-lucide="moon" class="w-4 h-4 text-primary"></i>`;
+      updateWatermark();
+      lucide.createIcons();
+    }
+
+    // Init
+    document.getElementById("btn-theme").addEventListener("click", () => {
+      const isDark = document.documentElement.classList.contains("dark");
+      setThemeMode(!isDark);
+    });
+
+    renderRooms();
+    renderMessages();
+    setThemeMode(true);
+  </script>
+</body>
+</html>

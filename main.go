@@ -135,6 +135,9 @@ func Init(options appOptions) {
 	if err := dal.InitDB(); err != nil {
 		panic(err)
 	}
+	if err := service.BackfillChatMediaPaths(); err != nil {
+		hlog.Errorf("backfill local Fandom media paths failed: %v", err)
+	}
 }
 
 func ensureLoginSetup(options appOptions) error {
@@ -210,15 +213,23 @@ func registerRoutes(h *server.Hertz) {
 		c.JSON(consts.StatusOK, utils.H{"message": "pong"})
 	})
 
-	// 本地媒体访问：历史兼容路由，本次前端不会使用。
+	// Fandom 本地媒体访问：按消息 ID 映射，前端会在本地文件不可用时回退远程 URL。
 	h.GET("/media/:file", handler.HandleGetChatMedia)
 
 	chatGroup := h.Group("/api/chat")
 	{
 		chatGroup.GET("/rooms", handler.HandleGetChatRooms)
 		chatGroup.GET("/messages", handler.HandleGetChatMessages)
+		chatGroup.GET("/dates", handler.HandleGetChatDates)
 		chatGroup.GET("/search", handler.HandleSearchChatMessages)
 		chatGroup.POST("/send", handler.HandleSendChatMessage)
+	}
+	primeGroup := h.Group("/api/prime")
+	{
+		primeGroup.GET("/rooms", handler.HandleGetPrimeChatRooms)
+		primeGroup.GET("/messages", handler.HandleGetPrimeChatMessages)
+		primeGroup.GET("/dates", handler.HandleGetPrimeChatDates)
+		primeGroup.GET("/search", handler.HandleSearchPrimeChatMessages)
 	}
 	h.GET("/api/user/me", handler.HandleGetCurrentUser)
 	h.GET("/api/translate", handler.HandleTranslate)

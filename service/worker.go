@@ -59,11 +59,6 @@ var (
 			Handle:   syncOshiProfiles,
 			Interval: func() time.Duration { return 10 * time.Minute },
 		},
-		{
-			Name:     "syncPrimeChatRooms",
-			Handle:   syncPrimeChatRooms,
-			Interval: func() time.Duration { return 15 * time.Minute },
-		},
 	}
 )
 
@@ -83,8 +78,8 @@ func Init() {
 	if err := checkLive(); err != nil {
 		hlog.Errorf("checkLive failed, err: %v", err)
 	}
-	if err := syncPrimeChatRooms(); err != nil {
-		hlog.Errorf("syncPrimeChatRooms failed, err: %v", err)
+	if err := syncPrimeChatAtStartup(); err != nil {
+		hlog.Errorf("syncPrimeChatAtStartup failed, err: %v", err)
 	}
 	startWorkers()
 }

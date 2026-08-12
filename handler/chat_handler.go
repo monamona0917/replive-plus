@@ -1,12 +1,10 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"mime"
-	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"replive/config"
@@ -43,6 +41,8 @@ type ChatMessageDTO struct {
 	Content       string `json:"content"`
 	ImageUrl      string `json:"image_url"`
 	VideoUrl      string `json:"video_url"`
+	ImageLocalURL string `json:"image_local_url,omitempty"`
+	VideoLocalURL string `json:"video_local_url,omitempty"`
 	TimeStr       string `json:"time_str"`
 	SendTime      int64  `json:"send_time"`
 }
@@ -138,6 +138,55 @@ func HandleGetChatMessages(ctx context.Context, c *app.RequestContext) {
 		HasNewer:     hasNewer,
 		AnchorId:     anchorID,
 	}})
+}
+
+// HandleGetChatDates returns every local calendar day containing a message in a chat room.
+func HandleGetChatDates(ctx context.Context, c *app.RequestContext) {
+	displayName := strings.TrimSpace(string(c.Query("display_name")))
+	if displayName == "" {
+		c.JSON(consts.StatusOK, BadResp("display_name 不能为空"))
+		return
+	}
+
+	msgType, err := parseInt32Query(c, "msg_type", 0)
+	if err != nil {
+		c.JSON(consts.StatusOK, BadResp(err.Error()))
+		return
+	}
+
+	room, err := findChatRoom(displayName)
+	if err != nil {
+		c.JSON(consts.StatusOK, BadResp(err.Error()))
+		return
+	}
+	if room.UserId == "" || room.ChatRoomId == "" {
+		c.JSON(consts.StatusOK, &Resp{Data: []string{}})
+		return
+	}
+
+	type dateRow struct {
+		DateKey string `gorm:"column:date_key"`
+	}
+	rows := make([]dateRow, 0)
+	err = baseMessageQuery(room.UserId, room.ChatRoomId, msgType).
+		Where("send_time > 0").
+		Select("strftime('%Y-%m-%d', send_time, 'unixepoch', 'localtime') AS date_key").
+		Group("date_key").
+		Order("date_key ASC").
+		Scan(&rows).Error
+	if err != nil {
+		hlog.Errorf("query chat dates failed, uid=%s room=%s err=%v", room.UserId, room.ChatRoomId, err)
+		c.JSON(consts.StatusOK, BadResp(err.Error()))
+		return
+	}
+
+	dates := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.DateKey != "" {
+			dates = append(dates, row.DateKey)
+		}
+	}
+	c.JSON(consts.StatusOK, &Resp{Data: dates})
 }
 
 func HandleSearchChatMessages(ctx context.Context, c *app.RequestContext) {
@@ -242,43 +291,64 @@ func queryChatMessages(userID string, chatRoomID string, msgType int32, cursorID
 		if cursorID <= 0 {
 			return []dal.ChatMessage{}, false, false, nil
 		}
+		cursor, found, err := findChatMessageCursor(userID, chatRoomID, msgType, cursorID)
+		if err != nil {
+			return nil, false, false, err
+		}
+		if !found {
+			return []dal.ChatMessage{}, false, false, nil
+		}
 		msgs := make([]dal.ChatMessage, 0, limit)
-		if err := query.Where("id > ?", cursorID).Order("id asc").Limit(limit).Find(&msgs).Error; err != nil {
+		if err := messagesAfter(query, cursor).Order("send_time asc, id asc").Limit(limit).Find(&msgs).Error; err != nil {
 			return nil, false, false, err
 		}
 		hasNewer := len(msgs) > int(pageSize)
 		if hasNewer {
 			msgs = msgs[:pageSize]
 		}
-		hasOlder, err := hasMessageBefore(userID, chatRoomID, msgType, minMessageID(msgs))
+		hasOlder, err := hasMessageBefore(userID, chatRoomID, msgType, oldestMessageID(msgs))
 		return msgs, hasOlder, hasNewer, err
 	case "around":
 		if anchorID <= 0 {
 			return []dal.ChatMessage{}, false, false, nil
 		}
+		anchor, found, err := findChatMessageCursor(userID, chatRoomID, msgType, anchorID)
+		if err != nil {
+			return nil, false, false, err
+		}
+		if !found {
+			return []dal.ChatMessage{}, false, false, nil
+		}
 		msgs := make([]dal.ChatMessage, 0, limit)
-		if err := query.Where("id >= ?", anchorID).Order("id asc").Limit(limit).Find(&msgs).Error; err != nil {
+		if err := messagesAtOrAfter(query, anchor).Order("send_time asc, id asc").Limit(limit).Find(&msgs).Error; err != nil {
 			return nil, false, false, err
 		}
 		hasNewer := len(msgs) > int(pageSize)
 		if hasNewer {
 			msgs = msgs[:pageSize]
 		}
-		hasOlder, err := hasMessageBefore(userID, chatRoomID, msgType, minMessageID(msgs))
+		hasOlder, err := hasMessageBefore(userID, chatRoomID, msgType, oldestMessageID(msgs))
 		return msgs, hasOlder, hasNewer, err
 	default:
 		if cursorID > 0 {
-			query = query.Where("id < ?", cursorID)
+			cursor, found, err := findChatMessageCursor(userID, chatRoomID, msgType, cursorID)
+			if err != nil {
+				return nil, false, false, err
+			}
+			if !found {
+				return []dal.ChatMessage{}, false, false, nil
+			}
+			query = messagesBefore(query, cursor)
 		}
 		msgs := make([]dal.ChatMessage, 0, limit)
-		if err := query.Order("id desc").Limit(limit).Find(&msgs).Error; err != nil {
+		if err := query.Order("send_time desc, id desc").Limit(limit).Find(&msgs).Error; err != nil {
 			return nil, false, false, err
 		}
 		hasOlder := len(msgs) > int(pageSize)
 		if hasOlder {
 			msgs = msgs[:pageSize]
 		}
-		hasNewer, err := hasMessageAfter(userID, chatRoomID, msgType, maxMessageID(msgs))
+		hasNewer, err := hasMessageAfter(userID, chatRoomID, msgType, newestMessageID(msgs))
 		return msgs, hasOlder, hasNewer, err
 	}
 }
@@ -296,10 +366,13 @@ func hasMessageBefore(userID string, chatRoomID string, msgType int32, id int64)
 	if id <= 0 {
 		return false, nil
 	}
+	anchor, found, err := findChatMessageCursor(userID, chatRoomID, msgType, id)
+	if err != nil || !found {
+		return false, err
+	}
 	var msg dal.ChatMessage
-	err := baseMessageQuery(userID, chatRoomID, msgType).
-		Where("id < ?", id).
-		Order("id desc").
+	err = messagesBefore(baseMessageQuery(userID, chatRoomID, msgType), anchor).
+		Order("send_time desc, id desc").
 		Limit(1).
 		Find(&msg).Error
 	return msg.Id > 0, err
@@ -309,13 +382,37 @@ func hasMessageAfter(userID string, chatRoomID string, msgType int32, id int64) 
 	if id <= 0 {
 		return false, nil
 	}
+	anchor, found, err := findChatMessageCursor(userID, chatRoomID, msgType, id)
+	if err != nil || !found {
+		return false, err
+	}
 	var msg dal.ChatMessage
-	err := baseMessageQuery(userID, chatRoomID, msgType).
-		Where("id > ?", id).
-		Order("id asc").
+	err = messagesAfter(baseMessageQuery(userID, chatRoomID, msgType), anchor).
+		Order("send_time asc, id asc").
 		Limit(1).
 		Find(&msg).Error
 	return msg.Id > 0, err
+}
+
+func findChatMessageCursor(userID string, chatRoomID string, msgType int32, id int64) (dal.ChatMessage, bool, error) {
+	var msg dal.ChatMessage
+	err := baseMessageQuery(userID, chatRoomID, msgType).
+		Where("id = ?", id).
+		Limit(1).
+		Find(&msg).Error
+	return msg, msg.Id > 0, err
+}
+
+func messagesBefore(query *gorm.DB, anchor dal.ChatMessage) *gorm.DB {
+	return query.Where("send_time < ? OR (send_time = ? AND id < ?)", anchor.SendTime, anchor.SendTime, anchor.Id)
+}
+
+func messagesAfter(query *gorm.DB, anchor dal.ChatMessage) *gorm.DB {
+	return query.Where("send_time > ? OR (send_time = ? AND id > ?)", anchor.SendTime, anchor.SendTime, anchor.Id)
+}
+
+func messagesAtOrAfter(query *gorm.DB, anchor dal.ChatMessage) *gorm.DB {
+	return query.Where("send_time > ? OR (send_time = ? AND id >= ?)", anchor.SendTime, anchor.SendTime, anchor.Id)
 }
 
 func buildChatMessageResp(msgs []dal.ChatMessage) ([]*ChatMessageDTO, int64, int64) {
@@ -323,7 +420,7 @@ func buildChatMessageResp(msgs []dal.ChatMessage) ([]*ChatMessageDTO, int64, int
 	for i := range msgs {
 		respMsgs = append(respMsgs, chatMessageDTO(msgs[i]))
 	}
-	return respMsgs, minMessageID(msgs), maxMessageID(msgs)
+	return respMsgs, oldestMessageID(msgs), newestMessageID(msgs)
 }
 
 func chatMessageDTO(m dal.ChatMessage) *ChatMessageDTO {
@@ -337,29 +434,37 @@ func chatMessageDTO(m dal.ChatMessage) *ChatMessageDTO {
 		Content:       m.Content,
 		ImageUrl:      m.ImageUrl,
 		VideoUrl:      m.VideoUrl,
+		ImageLocalURL: localMediaURL(m.ChatMessageId, m.ImagePath, m.ImageUrl, ".jpeg"),
+		VideoLocalURL: localMediaURL(m.ChatMessageId, m.VideoPath, m.VideoUrl, ".mp4"),
 		TimeStr:       m.TimeStr,
 		SendTime:      m.SendTime,
 	}
 }
 
-func minMessageID(msgs []dal.ChatMessage) int64 {
-	minID := int64(0)
-	for _, msg := range msgs {
-		if minID == 0 || msg.Id < minID {
-			minID = msg.Id
+func oldestMessageID(msgs []dal.ChatMessage) int64 {
+	if len(msgs) == 0 {
+		return 0
+	}
+	oldest := msgs[0]
+	for _, msg := range msgs[1:] {
+		if msg.SendTime < oldest.SendTime || (msg.SendTime == oldest.SendTime && msg.Id < oldest.Id) {
+			oldest = msg
 		}
 	}
-	return minID
+	return oldest.Id
 }
 
-func maxMessageID(msgs []dal.ChatMessage) int64 {
-	maxID := int64(0)
-	for _, msg := range msgs {
-		if msg.Id > maxID {
-			maxID = msg.Id
+func newestMessageID(msgs []dal.ChatMessage) int64 {
+	if len(msgs) == 0 {
+		return 0
+	}
+	newest := msgs[0]
+	for _, msg := range msgs[1:] {
+		if msg.SendTime > newest.SendTime || (msg.SendTime == newest.SendTime && msg.Id > newest.Id) {
+			newest = msg
 		}
 	}
-	return maxID
+	return newest.Id
 }
 
 // HandleGetChatMedia 根据 chat_message_id 查本地文件并返回。
@@ -389,26 +494,22 @@ func HandleGetChatMedia(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	path := pickMediaPath(msg, ext)
-	if path == "" {
+	mediaPath := pickMediaPath(msg, ext)
+	if !isLocalMediaPath(mediaPath) {
 		c.SetStatusCode(consts.StatusNotFound)
 		_, _ = c.Write([]byte("media not found"))
 		return
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
+	info, err := os.Stat(mediaPath)
+	if err != nil || !info.Mode().IsRegular() {
 		c.SetStatusCode(consts.StatusNotFound)
-		_, _ = c.Write([]byte("read media failed"))
+		_, _ = c.Write([]byte("media not found"))
 		return
 	}
 
-	ct := mime.TypeByExtension(filepath.Ext(path))
-	if ct == "" {
-		ct = http.DetectContentType(data)
-	}
-	c.SetContentType(ct)
-	c.SetStatusCode(consts.StatusOK)
-	_, _ = c.Write(data)
+	// Hertz uses a file stream here and keeps byte-range requests for video previews.
+	c.Response.Header.Set("Cache-Control", "private, max-age=86400")
+	c.File(mediaPath)
 }
 
 // HandleDownloadVideo 兼容历史路由：GET /api/video/download?message_id=xxx
@@ -479,6 +580,44 @@ func buildMediaURL(c *app.RequestContext, msgID, ext string) string {
 	return fmt.Sprintf("%s://%s/media/%s%s", scheme, host, msgID, ext)
 }
 
+func localMediaURL(messageID, localPath, remoteURL, defaultExt string) string {
+	if strings.TrimSpace(messageID) == "" || strings.TrimSpace(localPath) == "" {
+		return ""
+	}
+	ext := filepath.Ext(localPath)
+	if ext == "" {
+		if parsed, err := url.Parse(remoteURL); err == nil {
+			ext = filepath.Ext(parsed.Path)
+		}
+	}
+	if ext == "" {
+		ext = defaultExt
+	}
+	return "/media/" + url.PathEscape(messageID) + ext
+}
+
+func isLocalMediaPath(mediaPath string) bool {
+	if strings.TrimSpace(mediaPath) == "" || strings.TrimSpace(config.GetMediaPath()) == "" {
+		return false
+	}
+	root, err := filepath.Abs(config.GetMediaPath())
+	if err != nil {
+		return false
+	}
+	path, err := filepath.Abs(mediaPath)
+	if err != nil {
+		return false
+	}
+	if resolvedRoot, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolvedRoot
+	}
+	if resolvedPath, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolvedPath
+	}
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel)
+}
+
 func splitMessageFile(file string) (msgID string, ext string) {
 	file = strings.TrimPrefix(file, "/")
 	if file == "" {
@@ -513,10 +652,10 @@ func pickMediaPath(msg *dal.ChatMessage, ext string) string {
 	ext = strings.ToLower(ext)
 	// 有 ext 时按 ext 选，没 ext 时优先视频再图片
 	if ext != "" {
-		if bytes.HasPrefix([]byte(ext), []byte(".mp4")) {
+		if strings.HasPrefix(ext, ".mp4") {
 			return msg.VideoPath
 		}
-		if bytes.HasPrefix([]byte(ext), []byte(".jpg")) || bytes.HasPrefix([]byte(ext), []byte(".jpeg")) || bytes.HasPrefix([]byte(ext), []byte(".png")) || bytes.HasPrefix([]byte(ext), []byte(".webp")) {
+		if strings.HasPrefix(ext, ".jpg") || strings.HasPrefix(ext, ".jpeg") || strings.HasPrefix(ext, ".png") || strings.HasPrefix(ext, ".webp") {
 			return msg.ImagePath
 		}
 	}
@@ -529,6 +668,10 @@ func pickMediaPath(msg *dal.ChatMessage, ext string) string {
 type SendMessageRequest struct {
 	ChatRoomId string `json:"chat_room_id"`
 	Content    string `json:"content"`
+}
+
+type SendMessageResponse struct {
+	ChatMessageId string `json:"chat_message_id"`
 }
 
 // HandleSendChatMessage 发送聊天消息
@@ -562,12 +705,12 @@ func HandleSendChatMessage(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	resp, err := rep_api.SendChatMessage(room.UserId, req.ChatRoomId, req.Content)
+	chatMessageID, err := rep_api.SendChatMessageWithID(room.UserId, req.ChatRoomId, req.Content)
 	if err != nil {
 		hlog.Errorf("HandleSendChatMessage: SendChatMessage failed: %v", err)
 		c.JSON(consts.StatusOK, BadResp("发送消息失败: "+err.Error()))
 		return
 	}
 	hlog.Infof("HandleSendChatMessage: success")
-	c.JSON(consts.StatusOK, &Resp{Data: resp})
+	c.JSON(consts.StatusOK, &Resp{Data: &SendMessageResponse{ChatMessageId: chatMessageID}})
 }

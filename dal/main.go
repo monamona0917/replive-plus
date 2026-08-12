@@ -1,12 +1,15 @@
 package dal
 
 type ChatRoom struct {
-	Id          int64  `json:"id"`
-	UserId      string `json:"user_id"`
-	UniqueId    string `json:"unique_id"`
-	DisplayName string `json:"display_name"`
-	ChatRoomId  string `json:"chat_room_id"`
-	AvatarUrl   string `json:"avatar_url"`
+	Id                 int64  `json:"id"`
+	UserId             string `json:"user_id"`
+	UniqueId           string `json:"unique_id"`
+	DisplayName        string `json:"display_name"`
+	ChatRoomId         string `json:"chat_room_id"`
+	AvatarUrl          string `json:"avatar_url"`
+	LastMessageTime    int64  `json:"last_message_time" gorm:"column:last_message_time;->;-:migration"`
+	LastMessageContent string `json:"last_message_content" gorm:"column:last_message_content;->;-:migration"`
+	LastMessageType    int32  `json:"last_message_type" gorm:"column:last_message_type;->;-:migration"`
 }
 
 func (c ChatRoom) TableName() string {
@@ -297,6 +300,63 @@ func createTable() error {
 	if err != nil {
 		return err
 	}
+	err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_chat_messages_room_send_time ON chat_messages(user_id, chat_room_id, send_time);`).Error
+	if err != nil {
+		return err
+	}
+	err = db.Exec(`CREATE TABLE IF NOT EXISTS prime_chat_rooms (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_room_id TEXT NOT NULL,
+    talent_user_id TEXT NOT NULL,
+    talent_unique_id TEXT NOT NULL DEFAULT '',
+    talent_display_name TEXT NOT NULL DEFAULT '',
+    talent_avatar_url TEXT NOT NULL DEFAULT '',
+    member_user_id TEXT NOT NULL DEFAULT '',
+    member_background_image_url TEXT NOT NULL DEFAULT '',
+    synced_at INTEGER NOT NULL DEFAULT 0
+)`).Error
+	if err != nil {
+		return err
+	}
+	err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_prime_chat_rooms_room_id ON prime_chat_rooms(chat_room_id);`).Error
+	if err != nil {
+		return err
+	}
+	err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_prime_chat_rooms_talent_member ON prime_chat_rooms(talent_user_id, member_user_id);`).Error
+	if err != nil {
+		return err
+	}
+	err = db.Exec(`CREATE TABLE IF NOT EXISTS prime_chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id TEXT NOT NULL,
+    chat_room_id TEXT NOT NULL,
+    chat_room_owner_user_id TEXT NOT NULL DEFAULT '',
+    member_user_id TEXT NOT NULL DEFAULT '',
+    sender TEXT NOT NULL DEFAULT '',
+    body_type TEXT NOT NULL DEFAULT '',
+    text_content TEXT NOT NULL DEFAULT '',
+    image_url TEXT NOT NULL DEFAULT '',
+    image_thumbnail_url TEXT NOT NULL DEFAULT '',
+    video_url TEXT NOT NULL DEFAULT '',
+    video_thumbnail_url TEXT NOT NULL DEFAULT '',
+    video_duration_seconds INTEGER NOT NULL DEFAULT 0,
+    coin_amount INTEGER NOT NULL DEFAULT 0,
+    reaction_emoji TEXT NOT NULL DEFAULT '',
+    is_deleted INTEGER NOT NULL DEFAULT 0,
+    is_read INTEGER NOT NULL DEFAULT 0,
+    create_unix_time_ms INTEGER NOT NULL DEFAULT 0
+)`).Error
+	if err != nil {
+		return err
+	}
+	err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_prime_chat_messages_message_id ON prime_chat_messages(message_id);`).Error
+	if err != nil {
+		return err
+	}
+	err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_prime_chat_messages_room_time ON prime_chat_messages(chat_room_id, create_unix_time_ms, id);`).Error
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -318,6 +378,55 @@ type ChatMessage struct {
 
 func (c ChatMessage) TableName() string {
 	return "chat_messages"
+}
+
+// PrimeChatRoom is deliberately separate from ChatRoom. Prime Chat is a
+// different Replive product and must never be mixed into the Fandom tables.
+type PrimeChatRoom struct {
+	Id                       int64  `json:"id"`
+	ChatRoomId               string `json:"chat_room_id"`
+	TalentUserId             string `json:"talent_user_id"`
+	TalentUniqueId           string `json:"talent_unique_id"`
+	TalentDisplayName        string `json:"talent_display_name"`
+	TalentAvatarUrl          string `json:"talent_avatar_url"`
+	MemberUserId             string `json:"member_user_id"`
+	MemberBackgroundImageUrl string `json:"member_background_image_url"`
+	SyncedAt                 int64  `json:"synced_at"`
+	LastMessageTime          int64  `json:"last_message_time" gorm:"column:last_message_time;->;-:migration"`
+	LastMessageContent       string `json:"last_message_content" gorm:"column:last_message_content;->;-:migration"`
+	LastMessageType          string `json:"last_message_type" gorm:"column:last_message_type;->;-:migration"`
+}
+
+func (PrimeChatRoom) TableName() string {
+	return "prime_chat_rooms"
+}
+
+type PrimeChatMessage struct {
+	Id                   int64  `json:"id"`
+	MessageId            string `json:"message_id"`
+	ChatRoomId           string `json:"chat_room_id"`
+	ChatRoomOwnerUserId  string `json:"chat_room_owner_user_id"`
+	MemberUserId         string `json:"member_user_id"`
+	Sender               string `json:"sender"`
+	BodyType             string `json:"body_type"`
+	TextContent          string `json:"text_content"`
+	ImageUrl             string `json:"image_url"`
+	ImageThumbnailUrl    string `json:"image_thumbnail_url"`
+	VideoUrl             string `json:"video_url"`
+	VideoThumbnailUrl    string `json:"video_thumbnail_url"`
+	VideoDurationSeconds int64  `json:"video_duration_seconds"`
+	CoinAmount           int64  `json:"coin_amount"`
+	ReactionEmoji        string `json:"reaction_emoji"`
+	IsDeleted            bool   `json:"is_deleted"`
+	IsRead               bool   `json:"is_read"`
+	CreateUnixTimeMillis int64  `gorm:"column:create_unix_time_ms" json:"create_unix_time_ms"`
+	// ReactionOnly is metadata for the current startup sync only. It is not a
+	// database column and tells DAL to retain an existing full message payload.
+	ReactionOnly bool `gorm:"-" json:"-"`
+}
+
+func (PrimeChatMessage) TableName() string {
+	return "prime_chat_messages"
 }
 
 type LiveStream struct {
