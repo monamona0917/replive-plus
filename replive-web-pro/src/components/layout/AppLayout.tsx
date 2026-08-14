@@ -27,9 +27,10 @@ export const AppLayout = () => {
     if (!selectedRoom || selectedRoom.category === "prime") return;
     const interval = setInterval(() => {
       void pollNewMessages(selectedRoom);
+      void loadRooms();
     }, 15000);
     return () => clearInterval(interval);
-  }, [selectedRoom, pollNewMessages]);
+  }, [selectedRoom, pollNewMessages, loadRooms]);
 
   // 全局快捷键监听 (Ctrl+F 全局搜索)
   useEffect(() => {

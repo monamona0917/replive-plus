@@ -9,6 +9,7 @@ import (
 	"replive/dal"
 	"replive/model"
 	"replive/rep_api"
+	"replive/utils"
 	"sort"
 	"sync"
 	"time"
@@ -59,7 +60,7 @@ func saveChatRooms() error {
 		hlog.Error("GetChatRooms failed, err: %v", err)
 		return err
 	}
-	hlog.Infof("GetChatRooms success, result: %v", chatRooms)
+	hlog.Infof("GetChatRooms success, room_count: %d", len(chatRooms))
 	chatRoomMap := make(map[string]*dal.ChatRoom)
 	for _, chatRoom := range innerChatRooms {
 		chatRoomMap[chatRoom.ChatRoomId] = chatRoom
@@ -68,12 +69,22 @@ func saveChatRooms() error {
 	currentRooms := make([]*dal.ChatRoom, 0)
 	err = dal.WithWriteDB(func(db *gorm.DB) error {
 		for _, chatRoom := range chatRooms {
+			if chatRoom == nil || chatRoom.UserProfile == nil {
+				hlog.Warnf("Skip malformed Fandom chat room while syncing timing probe")
+				continue
+			}
+			timing, timingErr := rep_api.ParseChatRoomTiming(chatRoom)
+			if timingErr != nil {
+				hlog.Warnf("Fandom room timing probe parse failed, chatRoomId: %s, err: %v", chatRoom.ChatRoomId, timingErr)
+			}
+			logChatRoomTimingProbe(chatRoom, timing)
 			innerChatRoom := &dal.ChatRoom{
-				UserId:      chatRoom.UserId,
-				UniqueId:    chatRoom.UserProfile.UniqueId,
-				DisplayName: chatRoom.UserProfile.DisplayName,
-				ChatRoomId:  chatRoom.ChatRoomId,
-				AvatarUrl:   chatRoom.UserProfile.AvatarUrl,
+				UserId:              chatRoom.UserId,
+				UniqueId:            chatRoom.UserProfile.UniqueId,
+				DisplayName:         chatRoom.UserProfile.DisplayName,
+				ChatRoomId:          chatRoom.ChatRoomId,
+				AvatarUrl:           chatRoom.UserProfile.AvatarUrl,
+				TalentLastCheckTime: chatRoomTimingUnix(timing.TalentLastCheckTime, timing.HasTalentLastCheckTime),
 			}
 			currentRooms = append(currentRooms, innerChatRoom)
 			if existing, ok := chatRoomMap[chatRoom.ChatRoomId]; ok {
@@ -142,7 +153,33 @@ func changedChatRoomFields(existing *dal.ChatRoom, next *dal.ChatRoom) map[strin
 	if existing.AvatarUrl != next.AvatarUrl {
 		updates["avatar_url"] = next.AvatarUrl
 	}
+	if existing.TalentLastCheckTime != next.TalentLastCheckTime {
+		updates["talent_last_check_time"] = next.TalentLastCheckTime
+	}
 	return updates
+}
+
+func logChatRoomTimingProbe(chatRoom *model.ChatRoom, timing rep_api.ChatRoomTiming) {
+	hlog.Infof(
+		"Fandom room timing probe: display_name=%q chat_room_id=%s talent_last_check_time=%s",
+		chatRoom.UserProfile.DisplayName,
+		chatRoom.ChatRoomId,
+		formatChatRoomProbeTime(timing.TalentLastCheckTime, timing.HasTalentLastCheckTime),
+	)
+}
+
+func formatChatRoomProbeTime(value time.Time, present bool) string {
+	if !present {
+		return "unset"
+	}
+	return fmt.Sprintf("%s (unix=%d)", value.In(utils.JapanLocation()).Format(time.RFC3339Nano), value.Unix())
+}
+
+func chatRoomTimingUnix(value time.Time, present bool) int64 {
+	if !present {
+		return 0
+	}
+	return value.Unix()
 }
 
 func refreshNewMessages() error {

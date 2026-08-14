@@ -15,6 +15,8 @@ export interface ChatRoom {
   avatarUrl?: string;
   memberUserId?: string;
   backgroundImageUrl?: string;
+  // Fandom talent's last room-check time, normalized to Unix milliseconds.
+  talentLastCheckTime?: number;
   category?: ChatCategory;
   lastMessageTime?: string;
   lastMessageContent?: string;
@@ -68,6 +70,7 @@ export interface BackendChatRoom {
   chat_room_id: string;
   display_name: string;
   avatar_url?: string;
+  talent_last_check_time?: number | string;
   last_message_time?: number;
   last_message_content?: string;
   last_message_type?: number;

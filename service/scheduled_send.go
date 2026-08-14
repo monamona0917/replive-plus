@@ -10,7 +10,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/common/hlog"
 )
 
-const scheduledSendLocation = "Asia/Shanghai"
+const scheduledSendLocation = "Asia/Tokyo"
 
 func startScheduledChatSender() {
 	cfg := config.Conf.ScheduledChatMessage

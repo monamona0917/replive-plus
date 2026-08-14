@@ -20,6 +20,8 @@ main
 !replive-web/**/*.png
 !replive-web/src/components/chat/
 !replive-web/src/components/chat/**
+!replive-web-pro/src/components/chat/
+!replive-web-pro/src/components/chat/**
 # New Vite frontend generated directories. Dependencies are restored from
 # replive-web-pro/package-lock.json; production files are built into dist.
 replive-web-pro/node_modules/

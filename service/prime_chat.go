@@ -6,6 +6,7 @@ import (
 	"replive/config"
 	"replive/dal"
 	"replive/rep_api"
+	"replive/utils"
 	"strings"
 	"time"
 
@@ -150,14 +151,16 @@ func processPrimeChatRooms(rooms []*rep_api.PrimeChatRoom, now time.Time) error 
 		}
 
 		dbRooms = append(dbRooms, &dal.PrimeChatRoom{
-			ChatRoomId:               room.ChatRoomId,
-			TalentUserId:             room.TalentUserId,
-			TalentUniqueId:           room.TalentUniqueId,
-			TalentDisplayName:        room.TalentDisplayName,
-			TalentAvatarUrl:          room.TalentAvatarUrl,
-			MemberUserId:             room.MemberUserId,
-			MemberBackgroundImageUrl: room.MemberBackgroundImageUrl,
-			SyncedAt:                 now.Unix(),
+			ChatRoomId:                room.ChatRoomId,
+			TalentUserId:              room.TalentUserId,
+			TalentUniqueId:            room.TalentUniqueId,
+			TalentDisplayName:         room.TalentDisplayName,
+			TalentAvatarUrl:           room.TalentAvatarUrl,
+			MemberUserId:              room.MemberUserId,
+			MemberBackgroundImageUrl:  room.MemberBackgroundImageUrl,
+			TalentLastCheckTimeMillis: room.TalentLastCheckTimeMillis,
+			MemberLastCheckTimeMillis: room.MemberLastCheckTimeMillis,
+			SyncedAt:                  now.Unix(),
 		})
 
 		url := strings.TrimSpace(room.MemberBackgroundImageUrl)
@@ -176,8 +179,47 @@ func processPrimeChatRooms(rooms []*rep_api.PrimeChatRoom, now time.Time) error 
 	if err := dal.SavePrimeChatRooms(dbRooms); err != nil {
 		return fmt.Errorf("save Prime Chat rooms: %w", err)
 	}
+	logSubscribedPrimeChatTimingProbes(dbRooms)
 	hlog.Infof("Prime Chat startup room sync done: rooms=%d backgrounds=%d", len(dbRooms), downloaded)
 	return nil
+}
+
+func logSubscribedPrimeChatTimingProbes(rooms []*dal.PrimeChatRoom) {
+	fandomRooms, err := dal.GetChatRooms()
+	if err != nil {
+		hlog.Warnf("Prime Chat timing probe skipped: load Fandom rooms: %v", err)
+		return
+	}
+
+	subscribedTalentIDs := make(map[string]struct{}, len(fandomRooms))
+	for _, room := range fandomRooms {
+		if room != nil && strings.TrimSpace(room.UserId) != "" {
+			subscribedTalentIDs[room.UserId] = struct{}{}
+		}
+	}
+	for _, room := range rooms {
+		if room == nil {
+			continue
+		}
+		if _, subscribed := subscribedTalentIDs[room.TalentUserId]; !subscribed {
+			continue
+		}
+		hlog.Infof(
+			"Prime Chat timing probe: display_name=%q talent_user_id=%s member_user_id=%s talent_last_check_time=%s member_user_last_check_time=%s (member/current account diagnostic only; only logged because this talent has a Fandom chat room for the current account)",
+			room.TalentDisplayName,
+			room.TalentUserId,
+			room.MemberUserId,
+			formatPrimeChatProbeTime(room.TalentLastCheckTimeMillis),
+			formatPrimeChatProbeTime(room.MemberLastCheckTimeMillis),
+		)
+	}
+}
+
+func formatPrimeChatProbeTime(value int64) string {
+	if value == 0 {
+		return "unset"
+	}
+	return fmt.Sprintf("%s (unix_ms=%d)", time.UnixMilli(value).In(utils.JapanLocation()).Format(time.RFC3339Nano), value)
 }
 
 // syncPrimeChatMessages walks every page once at startup. The server orders

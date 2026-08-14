@@ -11,14 +11,16 @@ import (
 
 // PrimeChatRoom Prime Chat 房间信息
 type PrimeChatRoom struct {
-	ChatRoomId               string
-	TalentUserId             string
-	TalentUniqueId           string
-	TalentDisplayName        string
-	TalentAvatarUrl          string
-	MemberUserId             string
-	MemberBackgroundImageUrl string
-	MemberProfileImageUrl    string
+	ChatRoomId                string
+	TalentUserId              string
+	TalentUniqueId            string
+	TalentDisplayName         string
+	TalentAvatarUrl           string
+	MemberUserId              string
+	MemberBackgroundImageUrl  string
+	MemberProfileImageUrl     string
+	TalentLastCheckTimeMillis int64
+	MemberLastCheckTimeMillis int64
 }
 
 const (
@@ -505,6 +507,21 @@ func parsePrimeChatRoom(b []byte, room *PrimeChatRoom) {
 			room.MemberBackgroundImageUrl = string(v)
 			b = b[n2:]
 
+		case num == 100:
+			value, n2 := parsePrimeChatCreateTime(typ, b)
+			if n2 < 0 {
+				return
+			}
+			room.TalentLastCheckTimeMillis = value
+			b = b[n2:]
+
+		case num == 101:
+			value, n2 := parsePrimeChatCreateTime(typ, b)
+			if n2 < 0 {
+				return
+			}
+			room.MemberLastCheckTimeMillis = value
+			b = b[n2:]
 		default:
 			n2 := protowire.ConsumeFieldValue(num, typ, b)
 			if n2 < 0 {

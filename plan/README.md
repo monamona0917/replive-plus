@@ -5,6 +5,7 @@
 ## 当前活跃计划
 
 - `chat-ui-multi-room-cursor-translation.md`：当前需要执行的计划。目标是把 `replive-web` 接到本地 Hertz/SQLite 后端，并实现 chat room 切换、游标式历史消息分页、翻译按钮和原始媒体 URL 展示。
+- `project-handoff-2026-08-13.md`：当前项目完整交接说明，包含工作区状态、时间字段结论、构建约定与后续注意事项。
 
 ## 历史上下文
 

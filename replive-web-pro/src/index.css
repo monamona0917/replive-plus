@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Keep the chat source in Tailwind's scan set even though the root ignore
+   file has a generic `chat` pattern for unrelated generated content. */
+@source "./components/chat";
+
 @custom-variant dark (&:is(.dark *));
 
 :root {

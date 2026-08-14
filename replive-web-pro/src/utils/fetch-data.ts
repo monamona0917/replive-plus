@@ -71,6 +71,23 @@ function freshRequestParams(params: Record<string, string | number | undefined>)
   return { ...params, _ts: Date.now() };
 }
 
+function normalizeEpochMilliseconds(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value < 100_000_000_000 ? value * 1000 : value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return numeric < 100_000_000_000 ? numeric * 1000 : numeric;
+    }
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return undefined;
+}
+
 function mapFandomRoom(room: BackendChatRoom): ChatRoom {
   return {
     id: room.id,
@@ -79,6 +96,7 @@ function mapFandomRoom(room: BackendChatRoom): ChatRoom {
     chatRoomId: room.chat_room_id,
     displayName: room.display_name,
     avatarUrl: room.avatar_url || undefined,
+    talentLastCheckTime: normalizeEpochMilliseconds(room.talent_last_check_time),
     lastMessageTime: room.last_message_time
       ? new Date(room.last_message_time * 1000).toISOString()
       : undefined,

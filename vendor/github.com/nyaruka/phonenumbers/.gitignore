@@ -1,0 +1,12 @@
+*.cov
+.DS_Store
+.vscode
+*~
+deploy
+fabfile.py
+fabfile.pyc
+carrier
+geocoding
+functions/*
+dist/
+_build

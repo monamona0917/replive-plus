@@ -1,15 +1,16 @@
 package dal
 
 type ChatRoom struct {
-	Id                 int64  `json:"id"`
-	UserId             string `json:"user_id"`
-	UniqueId           string `json:"unique_id"`
-	DisplayName        string `json:"display_name"`
-	ChatRoomId         string `json:"chat_room_id"`
-	AvatarUrl          string `json:"avatar_url"`
-	LastMessageTime    int64  `json:"last_message_time" gorm:"column:last_message_time;->;-:migration"`
-	LastMessageContent string `json:"last_message_content" gorm:"column:last_message_content;->;-:migration"`
-	LastMessageType    int32  `json:"last_message_type" gorm:"column:last_message_type;->;-:migration"`
+	Id                  int64  `json:"id"`
+	UserId              string `json:"user_id"`
+	UniqueId            string `json:"unique_id"`
+	DisplayName         string `json:"display_name"`
+	ChatRoomId          string `json:"chat_room_id"`
+	AvatarUrl           string `json:"avatar_url"`
+	TalentLastCheckTime int64  `json:"talent_last_check_time"`
+	LastMessageTime     int64  `json:"last_message_time" gorm:"column:last_message_time;->;-:migration"`
+	LastMessageContent  string `json:"last_message_content" gorm:"column:last_message_content;->;-:migration"`
+	LastMessageType     int32  `json:"last_message_type" gorm:"column:last_message_type;->;-:migration"`
 }
 
 func (c ChatRoom) TableName() string {
@@ -129,12 +130,17 @@ func createTable() error {
     unique_id TEXT NOT NULL,
     display_name TEXT NOT NULL,
     chat_room_id TEXT NOT NULL,
-    avatar_url TEXT NOT NULL
+    avatar_url TEXT NOT NULL,
+    talent_last_check_time INTEGER NOT NULL DEFAULT 0
 )`).Error
 	if err != nil {
 		return err
 	}
 	err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_chat_rooms_display_name ON chat_rooms(display_name);`).Error
+	if err != nil {
+		return err
+	}
+	err = ensureChatRoomTimingColumns()
 	if err != nil {
 		return err
 	}
@@ -313,8 +319,14 @@ func createTable() error {
     talent_avatar_url TEXT NOT NULL DEFAULT '',
     member_user_id TEXT NOT NULL DEFAULT '',
     member_background_image_url TEXT NOT NULL DEFAULT '',
+    talent_last_check_time_ms INTEGER NOT NULL DEFAULT 0,
+    member_last_check_time_ms INTEGER NOT NULL DEFAULT 0,
     synced_at INTEGER NOT NULL DEFAULT 0
 )`).Error
+	if err != nil {
+		return err
+	}
+	err = ensurePrimeChatRoomTimingColumns()
 	if err != nil {
 		return err
 	}
@@ -360,6 +372,43 @@ func createTable() error {
 	return nil
 }
 
+func ensureChatRoomTimingColumns() error {
+	columns := []struct {
+		name string
+		sql  string
+	}{
+		{name: "talent_last_check_time", sql: "ALTER TABLE chat_rooms ADD COLUMN talent_last_check_time INTEGER NOT NULL DEFAULT 0"},
+	}
+	for _, column := range columns {
+		if db.Migrator().HasColumn(&ChatRoom{}, column.name) {
+			continue
+		}
+		if err := db.Exec(column.sql).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensurePrimeChatRoomTimingColumns() error {
+	columns := []struct {
+		name string
+		sql  string
+	}{
+		{name: "talent_last_check_time_ms", sql: "ALTER TABLE prime_chat_rooms ADD COLUMN talent_last_check_time_ms INTEGER NOT NULL DEFAULT 0"},
+		{name: "member_last_check_time_ms", sql: "ALTER TABLE prime_chat_rooms ADD COLUMN member_last_check_time_ms INTEGER NOT NULL DEFAULT 0"},
+	}
+	for _, column := range columns {
+		if db.Migrator().HasColumn(&PrimeChatRoom{}, column.name) {
+			continue
+		}
+		if err := db.Exec(column.sql).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type ChatMessage struct {
 	Id            int64  `json:"id"`
 	UserId        string `json:"user_id"`
@@ -383,18 +432,20 @@ func (c ChatMessage) TableName() string {
 // PrimeChatRoom is deliberately separate from ChatRoom. Prime Chat is a
 // different Replive product and must never be mixed into the Fandom tables.
 type PrimeChatRoom struct {
-	Id                       int64  `json:"id"`
-	ChatRoomId               string `json:"chat_room_id"`
-	TalentUserId             string `json:"talent_user_id"`
-	TalentUniqueId           string `json:"talent_unique_id"`
-	TalentDisplayName        string `json:"talent_display_name"`
-	TalentAvatarUrl          string `json:"talent_avatar_url"`
-	MemberUserId             string `json:"member_user_id"`
-	MemberBackgroundImageUrl string `json:"member_background_image_url"`
-	SyncedAt                 int64  `json:"synced_at"`
-	LastMessageTime          int64  `json:"last_message_time" gorm:"column:last_message_time;->;-:migration"`
-	LastMessageContent       string `json:"last_message_content" gorm:"column:last_message_content;->;-:migration"`
-	LastMessageType          string `json:"last_message_type" gorm:"column:last_message_type;->;-:migration"`
+	Id                        int64  `json:"id"`
+	ChatRoomId                string `json:"chat_room_id"`
+	TalentUserId              string `json:"talent_user_id"`
+	TalentUniqueId            string `json:"talent_unique_id"`
+	TalentDisplayName         string `json:"talent_display_name"`
+	TalentAvatarUrl           string `json:"talent_avatar_url"`
+	MemberUserId              string `json:"member_user_id"`
+	MemberBackgroundImageUrl  string `json:"member_background_image_url"`
+	TalentLastCheckTimeMillis int64  `json:"talent_last_check_time_ms" gorm:"column:talent_last_check_time_ms"`
+	MemberLastCheckTimeMillis int64  `json:"member_last_check_time_ms" gorm:"column:member_last_check_time_ms"`
+	SyncedAt                  int64  `json:"synced_at"`
+	LastMessageTime           int64  `json:"last_message_time" gorm:"column:last_message_time;->;-:migration"`
+	LastMessageContent        string `json:"last_message_content" gorm:"column:last_message_content;->;-:migration"`
+	LastMessageType           string `json:"last_message_type" gorm:"column:last_message_type;->;-:migration"`
 }
 
 func (PrimeChatRoom) TableName() string {

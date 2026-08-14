@@ -10,6 +10,7 @@ import (
 	"replive/config"
 	"replive/dal"
 	"replive/rep_api"
+	"replive/utils"
 	"strconv"
 	"strings"
 	"time"
@@ -170,7 +171,7 @@ func HandleGetChatDates(ctx context.Context, c *app.RequestContext) {
 	rows := make([]dateRow, 0)
 	err = baseMessageQuery(room.UserId, room.ChatRoomId, msgType).
 		Where("send_time > 0").
-		Select("strftime('%Y-%m-%d', send_time, 'unixepoch', 'localtime') AS date_key").
+		Select("strftime('%Y-%m-%d', send_time, 'unixepoch', '+9 hours') AS date_key").
 		Group("date_key").
 		Order("date_key ASC").
 		Scan(&rows).Error
@@ -267,7 +268,7 @@ func findChatRoom(displayName string) (dal.ChatRoom, error) {
 }
 
 func findFirstMessageIDByDate(userID string, chatRoomID string, msgType int32, date string) (int64, error) {
-	start, err := time.ParseInLocation("2006-01-02", date, time.Local)
+	start, err := time.ParseInLocation("2006-01-02", date, utils.JapanLocation())
 	if err != nil {
 		return 0, fmt.Errorf("date 参数非法，应为 yyyy-MM-dd: %v", err)
 	}

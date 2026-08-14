@@ -18,7 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { cn } from "../../lib/utils";
+import { cn, currentJapanCalendarDate } from "../../lib/utils";
 import useChatStore, { roomKey } from "../../stores/chat-store";
 
 export const DateJumpModal = () => {
@@ -29,7 +29,7 @@ export const DateJumpModal = () => {
   const availableDatesByRoom = useChatStore((s) => s.availableDatesByRoom);
   const isLoadingDates = useChatStore((s) => s.isLoadingDates);
 
-  const [currentMonth, setCurrentMonth] = useState<Date>(new Date());
+  const [currentMonth, setCurrentMonth] = useState<Date>(currentJapanCalendarDate);
 
   const availableDates = useMemo(() => {
     if (!selectedRoom) return [];
@@ -71,10 +71,10 @@ export const DateJumpModal = () => {
         const parsed = parse(latestDateStr, "yyyy-MM-dd", new Date());
         setCurrentMonth(parsed);
       } catch {
-        setCurrentMonth(new Date());
+        setCurrentMonth(currentJapanCalendarDate());
       }
     } else {
-      setCurrentMonth(new Date());
+      setCurrentMonth(currentJapanCalendarDate());
     }
   };
 

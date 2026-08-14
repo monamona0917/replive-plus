@@ -1,5 +1,5 @@
-import { format } from "date-fns";
 import { create } from "zustand";
+import { formatDateKey } from "../lib/utils";
 import type {
   ChatCategory,
   ChatRoom,
@@ -106,7 +106,7 @@ export function groupMessagesByDate(messages: Message[]): MessageGroup[] {
   for (const message of messages) {
     let dateStr = "未知日期";
     try {
-      dateStr = format(new Date(message.createdAt), "yyyy-MM-dd");
+      dateStr = formatDateKey(message.createdAt);
     } catch {
       dateStr = message.createdAt.slice(0, 10) || "未知日期";
     }
@@ -148,7 +148,7 @@ function extractDatesFromMessages(messages: Message[]): string[] {
   const dates = new Set<string>();
   for (const msg of messages) {
     try {
-      const d = format(new Date(msg.createdAt), "yyyy-MM-dd");
+      const d = formatDateKey(msg.createdAt);
       if (d) dates.add(d);
     } catch {
       const sliceD = msg.createdAt.slice(0, 10);
@@ -239,9 +239,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     try {
       const rooms = await fetchChatRooms();
-      set({ rooms, isLoadingRooms: false });
-
       const currentRoom = get().selectedRoom;
+      const refreshedCurrentRoom = currentRoom
+        ? rooms.find((room) => roomKey(room) === roomKey(currentRoom))
+        : undefined;
+      set({
+        rooms,
+        selectedRoom: refreshedCurrentRoom || currentRoom,
+        isLoadingRooms: false,
+      });
       const currentCategory = get().activeCategory;
 
       if (!currentRoom && rooms.length > 0) {

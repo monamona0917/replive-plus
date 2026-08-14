@@ -1,6 +1,19 @@
-﻿# Chat UI 多房间、游标分页与翻译开发计划
+# Chat UI 多房间、游标分页与翻译开发计划
 
 ## 当前补充（2026-08-11）
+
+### Fandom 房间已读时间字段验证（2026-08-12）
+
+- 本阶段只增加后端采集、SQLite 持久化和同步日志，不增加前端“已读”展示，也不改 Prime Chat。
+- 仅采集 `ListChatRooms` 返回的逐房间服务端字段 `talent_last_check_time`，保存为 Unix 秒并在每次房间同步时输出可读日志。`last_check_chat_message_create_time` 是当前账号最后发送消息的时间，不再采集、保存或输出。
+- `latest_chat_room_join_time` 是 `ListChatRoomsRequest` 的本客户端请求游标；本次请求未传值时日志必须明确显示为未设置，不能将它当作对方访问聊天室的时间。
+- 日志用于在官方客户端实际打开/未打开房间后，比对两个服务端字段的变化，之后再决定已读 UI 依据。
+
+### Prime Chat 已读时间采集（2026-08-13）
+
+- Prime Chat 保持独立同步与数据表，不影响“未订阅 Fandom 也可使用 Prime Chat”的既有能力。
+- 从 `ListPrimeChatRooms` 的房间响应采集主播侧 `user_last_check_time`（字段 100）与会员侧 `member_user_last_check_time`（字段 101），均以 Unix 毫秒保存并通过本地 Prime 房间接口返回。字段 101 仅用于诊断对照，不能视为对方进入或已读时间。
+- 仅对 `prime_chat_rooms.talent_user_id` 同时存在于当前账号 Fandom `chat_rooms.user_id` 的房间输出 Prime 已读时间日志；该交集由 SQLite 动态查询，不写死用户 ID、名称或配置名单。
 
 当前实际前端为 `replive-web-pro/`，本阶段仅处理进入房间后的消息列表底部定位与媒体首屏加载：
 
@@ -315,4 +328,3 @@ export interface Message {
 - 前端开发时是否使用 Vite proxy 转发到 Hertz 后端，还是让后端直接托管构建后的前端文件？
 - 搜索是否暂时只搜索已加载消息，还是要新增后端搜索接口？
 - room 切换列表按什么顺序展示：插入顺序、字母顺序，还是最近消息时间？
-

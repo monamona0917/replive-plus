@@ -13,6 +13,7 @@ import (
 	"replive/login"
 	"replive/rep_api"
 	"replive/service"
+	repliveUtils "replive/utils"
 	"runtime"
 	"runtime/debug"
 	"time"
@@ -33,6 +34,8 @@ func main() {
 }
 
 func runMain() (exitCode int) {
+	repliveUtils.UseJapanLocalTime()
+
 	callback := flag.String("callback", "", "internal callback URL from browser")
 	listenURL := flag.String("listen", "", "internal listener URL")
 	flag.Parse()

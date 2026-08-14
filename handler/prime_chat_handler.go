@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"replive/dal"
+	"replive/utils"
 	"strings"
 	"time"
 
@@ -16,18 +17,20 @@ import (
 // Prime Chat is intentionally served from a separate local API surface. It
 // never shares the Fandom room or message queries.
 type PrimeChatRoomDTO struct {
-	Id                       int64  `json:"id"`
-	ChatRoomId               string `json:"chat_room_id"`
-	TalentUserId             string `json:"talent_user_id"`
-	TalentUniqueId           string `json:"talent_unique_id"`
-	TalentDisplayName        string `json:"talent_display_name"`
-	TalentAvatarUrl          string `json:"talent_avatar_url"`
-	MemberUserId             string `json:"member_user_id"`
-	MemberBackgroundImageUrl string `json:"member_background_image_url"`
-	SyncedAt                 int64  `json:"synced_at"`
-	LastMessageTime          int64  `json:"last_message_time"`
-	LastMessageContent       string `json:"last_message_content"`
-	LastMessageType          string `json:"last_message_type"`
+	Id                        int64  `json:"id"`
+	ChatRoomId                string `json:"chat_room_id"`
+	TalentUserId              string `json:"talent_user_id"`
+	TalentUniqueId            string `json:"talent_unique_id"`
+	TalentDisplayName         string `json:"talent_display_name"`
+	TalentAvatarUrl           string `json:"talent_avatar_url"`
+	MemberUserId              string `json:"member_user_id"`
+	MemberBackgroundImageUrl  string `json:"member_background_image_url"`
+	TalentLastCheckTimeMillis int64  `json:"talent_last_check_time_ms"`
+	MemberLastCheckTimeMillis int64  `json:"member_last_check_time_ms"`
+	SyncedAt                  int64  `json:"synced_at"`
+	LastMessageTime           int64  `json:"last_message_time"`
+	LastMessageContent        string `json:"last_message_content"`
+	LastMessageType           string `json:"last_message_type"`
 }
 
 type PrimeChatMessageDTO struct {
@@ -166,7 +169,7 @@ func HandleGetPrimeChatDates(ctx context.Context, c *app.RequestContext) {
 	rows := make([]dateRow, 0)
 	err = primeBaseMessageQuery(chatRoomID, "").
 		Where("create_unix_time_ms > 0").
-		Select("strftime('%Y-%m-%d', create_unix_time_ms / 1000, 'unixepoch', 'localtime') AS date_key").
+		Select("strftime('%Y-%m-%d', create_unix_time_ms / 1000, 'unixepoch', '+9 hours') AS date_key").
 		Group("date_key").
 		Order("date_key ASC").
 		Scan(&rows).Error
@@ -281,7 +284,7 @@ func emptyPrimeMessagesResp() *GetPrimeChatMessagesResp {
 }
 
 func findFirstPrimeMessageIDByDate(chatRoomID, bodyType, date string) (int64, error) {
-	start, err := time.ParseInLocation("2006-01-02", date, time.Local)
+	start, err := time.ParseInLocation("2006-01-02", date, utils.JapanLocation())
 	if err != nil {
 		return 0, fmt.Errorf("invalid date %q; expected yyyy-MM-dd: %w", date, err)
 	}
@@ -449,18 +452,20 @@ func buildPrimeChatMessageResp(messages []dal.PrimeChatMessage) ([]*PrimeChatMes
 
 func primeChatRoomDTO(room *dal.PrimeChatRoom) *PrimeChatRoomDTO {
 	return &PrimeChatRoomDTO{
-		Id:                       room.Id,
-		ChatRoomId:               room.ChatRoomId,
-		TalentUserId:             room.TalentUserId,
-		TalentUniqueId:           room.TalentUniqueId,
-		TalentDisplayName:        room.TalentDisplayName,
-		TalentAvatarUrl:          room.TalentAvatarUrl,
-		MemberUserId:             room.MemberUserId,
-		MemberBackgroundImageUrl: room.MemberBackgroundImageUrl,
-		SyncedAt:                 room.SyncedAt,
-		LastMessageTime:          room.LastMessageTime,
-		LastMessageContent:       room.LastMessageContent,
-		LastMessageType:          room.LastMessageType,
+		Id:                        room.Id,
+		ChatRoomId:                room.ChatRoomId,
+		TalentUserId:              room.TalentUserId,
+		TalentUniqueId:            room.TalentUniqueId,
+		TalentDisplayName:         room.TalentDisplayName,
+		TalentAvatarUrl:           room.TalentAvatarUrl,
+		MemberUserId:              room.MemberUserId,
+		MemberBackgroundImageUrl:  room.MemberBackgroundImageUrl,
+		TalentLastCheckTimeMillis: room.TalentLastCheckTimeMillis,
+		MemberLastCheckTimeMillis: room.MemberLastCheckTimeMillis,
+		SyncedAt:                  room.SyncedAt,
+		LastMessageTime:           room.LastMessageTime,
+		LastMessageContent:        room.LastMessageContent,
+		LastMessageType:           room.LastMessageType,
 	}
 }
 
