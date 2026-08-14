@@ -45,11 +45,6 @@ var (
 			Interval: func() time.Duration { return time.Second * time.Duration(rand.IntN(30)+29) },
 		},
 		{
-			Name:     "checkLive",
-			Handle:   checkLive,
-			Interval: func() time.Duration { return time.Duration(rand.IntN(900)+500) * time.Millisecond },
-		},
-		{
 			Name:     "refreshNewMessages",
 			Handle:   refreshNewMessages,
 			Interval: func() time.Duration { return time.Duration(rand.IntN(3900)+3000) * time.Millisecond },
@@ -64,8 +59,6 @@ var (
 
 func Init() {
 	initEmailSender()
-	startFfmpegWatcher()
-	startScheduledChatSender()
 	if err := saveChatRooms(); err != nil {
 		hlog.Errorf("saveChatRooms failed, err: %v", err)
 		panic(err)
@@ -74,9 +67,6 @@ func Init() {
 	if err := refreshNewMessages(); err != nil {
 		hlog.Errorf("refreshNewMessages failed, err: %v", err)
 		panic(err)
-	}
-	if err := checkLive(); err != nil {
-		hlog.Errorf("checkLive failed, err: %v", err)
 	}
 	if err := syncPrimeChatAtStartup(); err != nil {
 		hlog.Errorf("syncPrimeChatAtStartup failed, err: %v", err)

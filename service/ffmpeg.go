@@ -34,8 +34,8 @@ func initFfmpeg() {
 }
 
 func startFfmpegWatcher() {
-	liveRecordChannel = make(chan *NsyLiveInfo, 1000)
 	ffmpegWatcherOnce.Do(func() {
+		liveRecordChannel = make(chan *NsyLiveInfo, 1000)
 		initFfmpeg()
 		hlog.Infof("ffmpeg path: %s, Starting ffmpeg watcher...", ffmpegPath)
 		go func() {

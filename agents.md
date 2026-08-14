@@ -2,7 +2,7 @@
 
 ## 项目结构与模块组织
 
-本项目名称为 `replive-plus`。仓库根目录是 Go/Hertz 后端，包含 SQLite 持久化和本地同步逻辑。核心包按职责划分：`api/` 负责 HTTP/API 接线，`handler/` 负责请求处理，`service/` 负责业务逻辑，`dal/` 负责数据库模型和持久化，`rep_api/` 负责 Replive API 客户端与解析器，`utils/` 放共享工具。`config/`、`login/`、`live/` 和 `model/` 存放支持性运行时及领域代码。
+本项目名称为 `replive-plus`。仓库根目录是 Go/Hertz 后端，包含 SQLite 持久化和本地同步逻辑。核心包按职责划分：`api/` 负责 HTTP/API 接线，`handler/` 负责请求处理，`service/` 负责业务逻辑，`dal/` 负责数据库模型和持久化，`rep_api/` 负责 Replive API 客户端与解析器，`utils/` 放共享工具。`config/`、`login/` 和 `model/` 存放支持性运行时及领域代码；`cmd/replive-live-recorder/` 是独立的直播轮询与录像进程。
 
 当前 Web 前端为 `replive-web-pro/`（React/Vite）。构建产物位于 `dist/`，计划和项目交接文档位于 `plan/`。
 
@@ -10,11 +10,14 @@
 
 - `go build -mod=vendor -o dist/replive-plus.exe .`：构建主后端可执行文件。
 - `go build -mod=vendor -o dist/replive-plus-web.exe ./replive-web-pro`：构建带 Web 的可执行文件。
+- `go build -mod=vendor -o dist/replive-live-recorder.exe ./cmd/replive-live-recorder`：构建独立直播录像进程。
 - `go test -mod=vendor ./...`：运行全部后端测试。
 - `cd replive-web-pro && npm install`：安装当前 Web UI 的依赖。
 - `cd replive-web-pro && npm run build`：构建生产前端资源。
 
 涉及本项目时统一使用 `replive-plus`，构建产物使用 `replive-plus.exe` 和 `replive-plus-web.exe`。以本节列出的 Go 与 Vite 命令作为默认构建方式。`build.sh`、`build_mac.sh`、`bootstrap_rep.sh` 与 `stop.sh` 尚未确认过时，但也不是默认工作流。
+
+主后端不再轮询直播状态，也不会启动 ffmpeg 录像。需要录像时单独运行 `replive-live-recorder.exe`；它复用同一份 `config.yaml`，且必须先由主程序完成登录。
 
 中国网络环境优先使用 `GOPROXY=https://goproxy.cn,direct` 和 `GOSUMDB=sum.golang.google.cn`。根目录已有 `vendor/`，优先使用 `-mod=vendor`，避免依赖网络下载。
 

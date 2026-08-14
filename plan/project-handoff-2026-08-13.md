@@ -5,7 +5,7 @@
 ## 1. 工作区与外部资料
 
 - 仓库根目录：`D:\Tencentt\Tencent Files\1528760842\文件\MobileFile\nsy_chat_live-master`
-- 根目录应用：Go/Hertz 后端、SQLite 同步、本地 HTTP API、直播监听与录制。
+- 根目录应用：Go/Hertz 后端、SQLite 同步与本地 HTTP API。直播轮询与录像已拆到 `cmd/replive-live-recorder/`，只在独立进程启动时运行。
 - 当前新版 Web：`replive-web-pro/`（React 19 + Vite + Zustand + Tailwind）。
 - `replive-web/`：旧版 Web，已在 2026-08-14 的遗留清理中移除；当前仅维护 `replive-web-pro/`。
 - 最新 APK：`C:\Users\Fu\Desktop\Replive_4.7.7.apk`
@@ -198,9 +198,12 @@ cd D:\Tencentt\Tencent Files\1528760842\文件\MobileFile\nsy_chat_live-master
 $env:CGO_ENABLED = "0"
 go build -mod=vendor -o dist\replive-plus.exe .
 go build -mod=vendor -o dist\replive-plus-web.exe .\replive-web-pro
+go build -mod=vendor -o dist\replive-live-recorder.exe .\cmd\replive-live-recorder
 ```
 
 已删除旧版 `replive-web/` 及其专用 Windows 构建脚本；使用上述命令构建当前版本。
+
+`replive-live-recorder.exe` 使用与主程序相同的 `config.yaml` 和登录令牌，不启动聊天同步或本地 HTTP API。需要录像时单独运行；可用 `-interval 2s` 调整直播状态轮询间隔。
 
 ### Go 环境与国内网络
 

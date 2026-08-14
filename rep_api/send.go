@@ -56,27 +56,3 @@ func newChatMessageID() string {
 	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
-
-func CreateCard(userID, liveID, content string, coinAmount int64) (*model.CreateCardResponse, error) {
-	userID = strings.TrimSpace(userID)
-	liveID = strings.TrimSpace(liveID)
-	content = strings.TrimSpace(content)
-	if userID == "" || content == "" || coinAmount <= 0 {
-		return nil, fmt.Errorf("user_id, content and positive coin_amount are required")
-	}
-	req := &model.CreateCardRequest{
-		UserId:     userID,
-		Content:    content,
-		CoinAmount: coinAmount,
-		LiveId:     liveID,
-	}
-	resp, err := Post("user.v1.LiveService/CreateCard", req)
-	if err != nil {
-		return nil, fmt.Errorf("create card failed: %v", err)
-	}
-	out := new(model.CreateCardResponse)
-	if err := proto.Unmarshal(resp, out); err != nil {
-		return nil, fmt.Errorf("unmarshal CreateCardResponse failed: %v", err)
-	}
-	return out, nil
-}

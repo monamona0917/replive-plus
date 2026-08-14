@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"replive/model"
@@ -27,6 +28,35 @@ var (
 	liveCacheClearDay string
 	getStreamingLive  = rep_api.GetStreamingLive
 )
+
+// RunLiveRecorder owns live-status polling and ffmpeg recording. It is kept
+// outside the normal chat worker lifecycle so the main backend does not poll
+// live status unless this standalone worker is started.
+func RunLiveRecorder(ctx context.Context, interval time.Duration) error {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	initEmailSender()
+	startFfmpegWatcher()
+	hlog.Infof("live recorder started, polling interval: %s", interval)
+
+	if err := checkLive(); err != nil {
+		hlog.Errorf("initial live check failed: %v", err)
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			hlog.Infof("live recorder stopped")
+			return nil
+		case <-ticker.C:
+			if err := checkLive(); err != nil {
+				hlog.Errorf("live check failed: %v", err)
+			}
+		}
+	}
+}
 
 func enqueueLiveRecord(nsyLiveInfo *NsyLiveInfo) error {
 	if liveRecordChannel == nil {
