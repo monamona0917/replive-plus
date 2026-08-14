@@ -6,12 +6,7 @@
   MessageSquareShare,
   X,
 } from "lucide-react";
-import {
-  useEffect,
-  useMemo,
-  useState,
-  type SyntheticEvent,
-} from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cn, formatShortDate } from "../../lib/utils";
 import useChatStore from "../../stores/chat-store";
 import type { MediaItem, Message } from "../../types/chat";
@@ -28,20 +23,6 @@ function VideoThumbnail({ item }: { item: MediaItem }) {
     setSource(item.url);
   }, [item.url]);
 
-  const requestPreviewFrame = (
-    event: SyntheticEvent<HTMLVideoElement>,
-  ) => {
-    const video = event.currentTarget;
-    if (item.thumbnailUrl || !Number.isFinite(video.duration) || video.duration <= 0) {
-      return;
-    }
-
-    const previewTime = Math.min(0.5, Math.max(0.1, video.duration / 2));
-    if (Math.abs(video.currentTime - previewTime) > 0.05) {
-      video.currentTime = previewTime;
-    }
-  };
-
   const handleError = () => {
     if (item.fallbackUrl && source !== item.fallbackUrl) {
       setSource(item.fallbackUrl);
@@ -51,12 +32,10 @@ function VideoThumbnail({ item }: { item: MediaItem }) {
   return (
     <video
       src={source}
-      poster={item.thumbnailUrl}
       preload="metadata"
       muted
       playsInline
       className="w-full h-full object-cover opacity-80"
-      onLoadedMetadata={requestPreviewFrame}
       onError={handleError}
     />
   );

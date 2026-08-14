@@ -184,9 +184,6 @@ export const MediaLightbox = () => {
               src={activeMediaSrc}
               controls
               autoPlay
-              playsInline
-              poster={lightboxMedia.thumbnailUrl}
-              onError={fallbackToRemote}
               className="max-w-[90vw] max-h-[82vh] object-contain rounded-lg shadow-2xl bg-black"
             />
           )}

@@ -33,7 +33,6 @@ export interface Message {
   createdAt: string;
   mediaUrl?: string;
   mediaFallbackUrl?: string;
-  mediaThumbnailUrl?: string;
   senderId: string;
   senderName: string;
   senderKind?: "talent" | "member";
@@ -125,7 +124,6 @@ export interface BackendPrimeMessage {
   content?: string;
   image_url?: string;
   video_url?: string;
-  video_thumbnail_url?: string;
   coin_amount?: number;
   reaction_emoji?: string;
   is_deleted?: boolean;
@@ -147,7 +145,6 @@ export interface MediaItem {
   type: "image" | "video";
   url: string;
   fallbackUrl?: string;
-  thumbnailUrl?: string;
   createdAt: string;
   senderName: string;
   messageId: string;
