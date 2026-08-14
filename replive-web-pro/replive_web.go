@@ -70,7 +70,7 @@ func serveFrontend(w http.ResponseWriter, r *http.Request, distFS fs.FS) {
 		filePath = "index.html"
 		data, err = fs.ReadFile(distFS, filePath)
 		if err != nil {
-			http.Error(w, "前端资源不存在，请重新打包 replive_web.exe", http.StatusInternalServerError)
+			http.Error(w, "前端资源不存在，请重新打包 replive-plus-web.exe", http.StatusInternalServerError)
 			return
 		}
 	}

@@ -7,14 +7,14 @@
 - 仓库根目录：`D:\Tencentt\Tencent Files\1528760842\文件\MobileFile\nsy_chat_live-master`
 - 根目录应用：Go/Hertz 后端、SQLite 同步、本地 HTTP API、直播监听与录制。
 - 当前新版 Web：`replive-web-pro/`（React 19 + Vite + Zustand + Tailwind）。
-- `replive-web/`：旧版 Web，仍存在但不是当前 UI 的开发目标。
+- `replive-web/`：旧版 Web，已在 2026-08-14 的遗留清理中移除；当前仅维护 `replive-web-pro/`。
 - 最新 APK：`C:\Users\Fu\Desktop\Replive_4.7.7.apk`
 - JADX 源码：`C:\Users\Fu\Documents\replive\jadx_4.7.7\sources`
 - 已解包 DEX：`C:\Users\Fu\Documents\replive\apk_dex\`
 - 用户常用运行目录：`F:\迅雷下载\replive\new\`
   - 数据库：`F:\迅雷下载\replive\new\sqlite.db`
   - 日志：`F:\迅雷下载\replive\new\replive_*.log`
-  - 手动复制运行的产物：`replive_prime.exe`、`replive_web_prime.exe`
+  - 手动复制运行的产物：`replive-plus.exe`、`replive-plus-web.exe`
 
 ## 2. 项目结构
 
@@ -183,8 +183,8 @@ Prime 保持“未订阅 Fandom 也可同步”的能力。Fandom/Prime ID 交�
 构建产物约定：
 
 - 输出到仓库根 `dist/`。
-- 只覆盖新的 `_prime` 产物：`dist\replive_prime.exe` 与 `dist\replive_web_prime.exe`。
-- 不触碰非 `_prime` 的旧可执行文件。
+- 默认构建产物：`dist\replive-plus.exe` 与 `dist\replive-plus-web.exe`。
+- `dist/` 是生成目录，不纳入 Git；构建前确认不会覆盖用户正在使用的文件。
 - 不启动程序。
 - 用户此前还要求不要额外跑 Go 测试、文件大小/差异检查。
 
@@ -196,11 +196,11 @@ npm run build
 
 cd D:\Tencentt\Tencent Files\1528760842\文件\MobileFile\nsy_chat_live-master
 $env:CGO_ENABLED = "0"
-go build -mod=vendor -o dist\replive_prime.exe .
-go build -mod=vendor -o dist\replive_web_prime.exe .\replive-web-pro
+go build -mod=vendor -o dist\replive-plus.exe .
+go build -mod=vendor -o dist\replive-plus-web.exe .\replive-web-pro
 ```
 
-不要直接使用 `build_all.bat` 作为本任务的默认构建方式：它面向旧 `replive-web/`、多平台 release 输出，并可能改变构建范围。`build_win.bat` 也构建/覆盖非 `_prime` 文件，和当前约定冲突。
+已删除旧版 `replive-web/` 及其专用 Windows 构建脚本；使用上述命令构建当前版本。
 
 ### Go 环境与国内网络
 
