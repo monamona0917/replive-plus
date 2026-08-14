@@ -368,6 +368,7 @@ export async function fetchRoomAllMedia(room: ChatRoom): Promise<MediaItem[]> {
       type: message.type === "video" ? "video" : "image",
       url: message.mediaUrl,
       fallbackUrl: message.mediaFallbackUrl,
+      thumbnailUrl: message.mediaThumbnailUrl,
       createdAt: message.createdAt,
       senderName: message.senderName,
       messageId: message.id,

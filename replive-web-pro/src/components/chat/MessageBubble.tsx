@@ -1,5 +1,5 @@
 ﻿import { ExternalLink, Play } from "lucide-react";
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useState, type SyntheticEvent } from "react";
 import { cn, formatTimeStr } from "../../lib/utils";
 import useChatStore from "../../stores/chat-store";
 import type { ChatRoom, Message, UserProfile } from "../../types/chat";
@@ -24,6 +24,18 @@ function useFallbackMediaSource(primary?: string, fallback?: string) {
   };
 
   return { mediaSrc, fallbackToRemote };
+}
+
+function requestVideoPreviewFrame(event: SyntheticEvent<HTMLVideoElement>) {
+  const video = event.currentTarget;
+  if (video.poster || !Number.isFinite(video.duration) || video.duration <= 0) {
+    return;
+  }
+
+  const previewTime = Math.min(0.5, Math.max(0.1, video.duration / 2));
+  if (Math.abs(video.currentTime - previewTime) > 0.05) {
+    video.currentTime = previewTime;
+  }
 }
 
 export const MessageBubble = memo(
@@ -72,6 +84,7 @@ export const MessageBubble = memo(
           message.mediaFallbackUrl && message.mediaFallbackUrl !== mediaSrc
             ? message.mediaFallbackUrl
             : undefined,
+        thumbnailUrl: message.mediaThumbnailUrl,
         createdAt: message.createdAt,
         senderName: message.senderName,
         messageId: message.id,
@@ -195,7 +208,9 @@ export const MessageBubble = memo(
                         poster={message.mediaThumbnailUrl}
                         preload="metadata"
                         muted
+                        playsInline
                         className="w-full h-full object-cover opacity-90"
+                        onLoadedMetadata={requestVideoPreviewFrame}
                         onError={fallbackToRemote}
                       />
                       <div className="absolute inset-0 flex items-center justify-center bg-black/25 group-hover/media:bg-black/40 transition-colors">

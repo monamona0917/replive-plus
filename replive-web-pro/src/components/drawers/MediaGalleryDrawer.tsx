@@ -6,7 +6,12 @@
   MessageSquareShare,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type SyntheticEvent,
+} from "react";
 import { cn, formatShortDate } from "../../lib/utils";
 import useChatStore from "../../stores/chat-store";
 import type { MediaItem, Message } from "../../types/chat";
@@ -15,6 +20,47 @@ const MEDIA_INITIAL_RENDER_COUNT = 18;
 const MEDIA_RENDER_BATCH_SIZE = 12;
 const MAX_CONCURRENT_IMAGE_LOADS = 4;
 const LOAD_MORE_THRESHOLD = 160;
+
+function VideoThumbnail({ item }: { item: MediaItem }) {
+  const [source, setSource] = useState(item.url);
+
+  useEffect(() => {
+    setSource(item.url);
+  }, [item.url]);
+
+  const requestPreviewFrame = (
+    event: SyntheticEvent<HTMLVideoElement>,
+  ) => {
+    const video = event.currentTarget;
+    if (item.thumbnailUrl || !Number.isFinite(video.duration) || video.duration <= 0) {
+      return;
+    }
+
+    const previewTime = Math.min(0.5, Math.max(0.1, video.duration / 2));
+    if (Math.abs(video.currentTime - previewTime) > 0.05) {
+      video.currentTime = previewTime;
+    }
+  };
+
+  const handleError = () => {
+    if (item.fallbackUrl && source !== item.fallbackUrl) {
+      setSource(item.fallbackUrl);
+    }
+  };
+
+  return (
+    <video
+      src={source}
+      poster={item.thumbnailUrl}
+      preload="metadata"
+      muted
+      playsInline
+      className="w-full h-full object-cover opacity-80"
+      onLoadedMetadata={requestPreviewFrame}
+      onError={handleError}
+    />
+  );
+}
 
 export const MediaGalleryDrawer = () => {
   const mediaGalleryDrawerOpen = useChatStore((s) => s.mediaGalleryDrawerOpen);
@@ -292,12 +338,7 @@ export const MediaGalleryDrawer = () => {
                       </>
                     ) : (
                       <div className="w-full h-full relative bg-black flex items-center justify-center">
-                        <video
-                          src={imageSource}
-                          preload="none"
-                          muted
-                          className="w-full h-full object-cover opacity-80"
-                        />
+                        <VideoThumbnail item={item} />
                         <span className="absolute inset-0 flex items-center justify-center bg-black/30">
                           <Film className="w-5 h-5 text-white/90" />
                         </span>

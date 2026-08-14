@@ -147,6 +147,7 @@ export interface MediaItem {
   type: "image" | "video";
   url: string;
   fallbackUrl?: string;
+  thumbnailUrl?: string;
   createdAt: string;
   senderName: string;
   messageId: string;
