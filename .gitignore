@@ -4,6 +4,12 @@ chat
 *.db
 *.log
 *.json
+# The current Vite frontend needs its project metadata in source control.
+!replive-web-pro/package.json
+!replive-web-pro/package-lock.json
+!replive-web-pro/tsconfig.json
+!replive-web-pro/tsconfig.app.json
+!replive-web-pro/tsconfig.node.json
 *.exe
 replive
 main
