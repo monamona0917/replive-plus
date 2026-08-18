@@ -3,6 +3,7 @@ import { formatDateKey } from "../lib/utils";
 import type {
   ChatCategory,
   ChatRoom,
+  JumpTarget,
   MediaItem,
   Message,
   MessageGroup,
@@ -19,6 +20,8 @@ import {
 } from "../utils/fetch-data";
 
 const PAGE_SIZE = 30;
+const JUMP_FILL_PAGE_SIZE = 100;
+let jumpRequestIdCounter = 0;
 
 export interface ChatState {
   // 专区与房间
@@ -41,11 +44,12 @@ export interface ChatState {
   availableDatesByRoom: Record<string, string[]>;
   isLoadingDates: boolean;
 
-  // 搜索与定位
+  // 搜索与版本化跳转
   searchQuery: string;
   searchResults: Message[];
   isSearching: boolean;
-  jumpTargetMessageId: string | null;
+  jumpTarget: JumpTarget | null;
+  roomEpoch: Record<string, number>;
   scrollToBottomToken: number;
 
   // 用户状态
@@ -81,7 +85,7 @@ export interface ChatState {
   clearSearch: () => void;
   sendMessage: (content: string) => Promise<void>;
   pollNewMessages: (room?: ChatRoom) => Promise<void>;
-  clearJumpTarget: () => void;
+  clearJumpTarget: (requestId?: number) => void;
   requestScrollToBottom: () => Promise<void>;
   setError: (error: string | null) => void;
 
@@ -134,6 +138,7 @@ function extractMediaItems(messages: Message[]): MediaItem[] {
         id: `media-${msg.id}`,
         type: msg.type,
         url: msg.mediaUrl,
+        fallbackUrl: msg.mediaFallbackUrl,
         createdAt: msg.createdAt,
         senderName: msg.senderName,
         messageId: msg.id,
@@ -148,13 +153,11 @@ function extractDatesFromMessages(messages: Message[]): string[] {
   const dates = new Set<string>();
   for (const msg of messages) {
     try {
-      const d = formatDateKey(msg.createdAt);
-      if (d) dates.add(d);
+      // 日期列表与后端都按日本时区计算，不能使用浏览器本地时区。
+      const dateKey = formatDateKey(msg.createdAt);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) dates.add(dateKey);
     } catch {
-      const sliceD = msg.createdAt.slice(0, 10);
-      if (sliceD && /^\d{4}-\d{2}-\d{2}$/.test(sliceD)) {
-        dates.add(sliceD);
-      }
+      // 忽略无法解析的格式
     }
   }
   return Array.from(dates).sort();
@@ -162,14 +165,24 @@ function extractDatesFromMessages(messages: Message[]): string[] {
 
 function uniqueSortedMessages(messages: Message[]): Message[] {
   const byId = new Map<string, Message>();
-
-  for (const message of messages) {
-    const key = message.chatMessageId || String(message.backendId) || message.id;
-    byId.set(key, message);
+  for (const msg of messages) {
+    const existing = byId.get(msg.id);
+    byId.set(
+      msg.id,
+      existing
+        ? {
+            ...existing,
+            ...msg,
+            mediaUrl: msg.mediaUrl || existing.mediaUrl,
+            mediaFallbackUrl:
+              msg.mediaFallbackUrl || existing.mediaFallbackUrl,
+          }
+        : msg,
+    );
   }
-
   return Array.from(byId.values()).sort((a, b) => {
-    const timeDiff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    const timeDiff =
+      new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
     if (timeDiff !== 0) return timeDiff;
     return a.backendId - b.backendId;
   });
@@ -196,7 +209,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   searchQuery: "",
   searchResults: [],
   isSearching: false,
-  jumpTargetMessageId: null,
+  jumpTarget: null,
+  roomEpoch: {},
   scrollToBottomToken: 0,
 
   userProfile: null,
@@ -213,13 +227,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isLoadingNewer: false,
   error: null,
 
-  setActiveCategory: (category: ChatCategory) => {
+  setActiveCategory: (category) => {
     set({ activeCategory: category });
-    const { selectedRoom, rooms } = get();
-    if (!selectedRoom || selectedRoom.category !== category) {
-      const firstRoomInCat = rooms.find((r) => (r.category || "fandom") === category);
-      if (firstRoomInCat) {
-        void get().selectRoom(firstRoomInCat);
+    const currentRoom = get().selectedRoom;
+    if (currentRoom && (currentRoom.category || "fandom") !== category) {
+      const rooms = get().rooms;
+      const firstInCat = rooms.find(
+        (r) => (r.category || "fandom") === category,
+      );
+      if (firstInCat) {
+        void get().selectRoom(firstInCat);
       }
     }
   },
@@ -229,23 +246,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const profile = await fetchUserProfile();
       set({ userProfile: profile });
     } catch {
-      // 保持默认
+      // 静默失败
     }
   },
 
   loadRooms: async () => {
-    if (get().isLoadingRooms) return;
     set({ isLoadingRooms: true, error: null });
-
     try {
       const rooms = await fetchChatRooms();
       const currentRoom = get().selectedRoom;
-      const refreshedCurrentRoom = currentRoom
-        ? rooms.find((room) => roomKey(room) === roomKey(currentRoom))
-        : undefined;
+      const updatedSelected = currentRoom
+        ? rooms.find((r) => roomKey(r) === roomKey(currentRoom)) || currentRoom
+        : null;
+
       set({
         rooms,
-        selectedRoom: refreshedCurrentRoom || currentRoom,
+        selectedRoom: updatedSelected,
         isLoadingRooms: false,
       });
       const currentCategory = get().activeCategory;
@@ -265,7 +281,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         error: err instanceof Error ? err.message : "加载聊天对象列表失败",
         isLoadingRooms: false,
-  isLoadingMessagesByRoom: {},
+        isLoadingMessagesByRoom: {},
       });
     }
   },
@@ -273,6 +289,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   selectRoom: async (room: ChatRoom) => {
     const key = roomKey(room);
     const roomCat = room.category || "fandom";
+
+    // 递增该房间代次并重置在途跳转状态
+    jumpRequestIdCounter++;
+    const currentEpoch = get().roomEpoch[key] ?? 0;
+    const myEpoch = currentEpoch + 1;
 
     set((state) => {
       const messages = state.messagesByRoom[key] ?? [];
@@ -286,6 +307,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messageGroups: groupMessagesByDate(messages),
         mediaList: currentMedia,
         error: null,
+        jumpTarget: null,
+        isLoadingMessagesByRoom: {
+          ...state.isLoadingMessagesByRoom,
+          [key]: false,
+        },
+        isLoadingMore: false,
+        isLoadingNewer: false,
+        roomEpoch: {
+          ...state.roomEpoch,
+          [key]: myEpoch,
+        },
       };
     });
 
@@ -377,12 +409,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const key = roomKey(targetRoom);
     if (get().isLoadingMessagesByRoom[key]) return;
+    if (get().jumpTarget?.roomKey === key) return;
+
+    const myEpoch = get().roomEpoch[key] ?? 0;
 
     set((state) => ({
       isLoadingMessagesByRoom: {
         ...state.isLoadingMessagesByRoom,
         [key]: true,
       },
+      isLoadingMore: false,
+      isLoadingNewer: false,
       error: null,
     }));
 
@@ -391,9 +428,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
         room: targetRoom,
         pageSize: PAGE_SIZE,
       });
+
+      // 校验代次：若期间发生了跳转或切房，直接丢弃，不能改动新请求的状态
+      if ((get().roomEpoch[key] ?? 0) !== myEpoch) {
+        return;
+      }
+
       const pageMessages = uniqueSortedMessages(page.messages);
 
       set((state) => {
+        if ((state.roomEpoch[key] ?? 0) !== myEpoch) {
+          return state;
+        }
+
         const pendingMessages = (state.messagesByRoom[key] ?? []).filter(
           (message) => message.backendId === 0,
         );
@@ -451,10 +498,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...state.isLoadingMessagesByRoom,
             [key]: false,
           },
-          jumpTargetMessageId: null,
         };
       });
     } catch (err) {
+      if ((get().roomEpoch[key] ?? 0) !== myEpoch) return;
       set((state) => ({
         error: err instanceof Error ? err.message : "Failed to load chat messages",
         isLoadingMessagesByRoom: {
@@ -474,11 +521,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const cursorId = get().cursorByRoom[key] ?? 0;
     if (!hasMore || cursorId <= 0) return;
 
+    const myEpoch = get().roomEpoch[key] ?? 0;
     set({ isLoadingMore: true, error: null });
+
     try {
       const page = await fetchChatMessages({ room: targetRoom, cursorId, pageSize: PAGE_SIZE });
 
+      if ((get().roomEpoch[key] ?? 0) !== myEpoch) {
+        return;
+      }
+
       set((state) => {
+        if ((state.roomEpoch[key] ?? 0) !== myEpoch) {
+          return state;
+        }
         const existing = state.messagesByRoom[key] ?? [];
         const merged = uniqueSortedMessages([...page.messages, ...existing]);
         const addedDates = extractDatesFromMessages(page.messages);
@@ -509,6 +565,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         };
       });
     } catch (err) {
+      if ((get().roomEpoch[key] ?? 0) !== myEpoch) return;
       set({
         error: err instanceof Error ? err.message : "加载历史消息失败",
         isLoadingMore: false,
@@ -525,7 +582,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const cursorId = get().newerCursorByRoom[key] ?? 0;
     if (!hasNewer || cursorId <= 0) return;
 
+    const myEpoch = get().roomEpoch[key] ?? 0;
     set({ isLoadingNewer: true, error: null });
+
     try {
       const page = await fetchChatMessages({
         room: targetRoom,
@@ -534,7 +593,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         pageSize: PAGE_SIZE,
       });
 
+      if ((get().roomEpoch[key] ?? 0) !== myEpoch) {
+        return;
+      }
+
       set((state) => {
+        if ((state.roomEpoch[key] ?? 0) !== myEpoch) {
+          return state;
+        }
         const existing = state.messagesByRoom[key] ?? [];
         const merged = uniqueSortedMessages([...existing, ...page.messages]);
         const addedDates = extractDatesFromMessages(page.messages);
@@ -569,6 +635,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         };
       });
     } catch (err) {
+      if ((get().roomEpoch[key] ?? 0) !== myEpoch) return;
       set({
         error: err instanceof Error ? err.message : "加载后续消息失败",
         isLoadingNewer: false,
@@ -581,24 +648,186 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!targetRoom) return;
 
     const key = roomKey(targetRoom);
-    if (get().isLoadingMessagesByRoom[key]) return;
+    const nextRequestId = ++jumpRequestIdCounter;
+    const currentEpoch = get().roomEpoch[key] ?? 0;
+    const myEpoch = currentEpoch + 1;
 
+    // 发起时立即置位跳转锁与代次
     set((state) => ({
+      roomEpoch: {
+        ...state.roomEpoch,
+        [key]: myEpoch,
+      },
+      jumpTarget: {
+        roomKey: key,
+        messageId: null,
+        date,
+        requestId: nextRequestId,
+      },
       isLoadingMessagesByRoom: {
         ...state.isLoadingMessagesByRoom,
         [key]: true,
       },
+      isLoadingMore: false,
+      isLoadingNewer: false,
       error: null,
+      dateJumpModalOpen: false,
     }));
 
+    // 最新窗口通常已经包含目标日期。优先使用当前内存中的权威消息，
+    // 避免为一个已加载日期重新请求 around 页面并把滚动容器短暂清空。
+    const localTarget = (get().messagesByRoom[key] ?? []).find(
+      (message) => formatDateKey(message.createdAt) === date,
+    );
+    if (localTarget) {
+      set((state) => ({
+        isLoadingMessagesByRoom: {
+          ...state.isLoadingMessagesByRoom,
+          [key]: false,
+        },
+        jumpTarget: {
+          roomKey: key,
+          messageId: localTarget.id,
+          backendId: localTarget.backendId,
+          date,
+          requestId: nextRequestId,
+        },
+      }));
+      return;
+    }
+
     try {
-      const page = await fetchChatMessages({
+      let page = await fetchChatMessages({
         room: targetRoom,
         date,
         direction: "around",
         pageSize: PAGE_SIZE,
       });
-      const targetMessageId = page.messages[0]?.id ?? null;
+
+      // 竞态校验：代次或 requestId 不匹配则直接丢弃
+      if (
+        (get().roomEpoch[key] ?? 0) !== myEpoch ||
+        get().jumpTarget?.requestId !== nextRequestId
+      ) {
+        return;
+      }
+
+      const findDateTarget = (messages: Message[], anchorId = 0) => {
+        const anchorBackendId = Number(anchorId);
+        return (
+          (anchorBackendId > 0
+            ? messages.find((m) => Number(m.backendId) === anchorBackendId)
+            : undefined) ??
+          messages.find((m) => formatDateKey(m.createdAt) === date)
+        );
+      };
+
+      let targetMsg = findDateTarget(page.messages, page.anchorId);
+
+      // 如果后端的 date/anchor 查询没有命中，沿用相册和搜索跳转使用的
+      // “已知游标继续向前取”的方式，自动加载更早页面直到找到目标日期。
+      // 用户不需要先手动拖到顶部触发历史分页。
+      if (!targetMsg) {
+        let merged = uniqueSortedMessages([
+          ...(get().messagesByRoom[key] ?? []),
+          ...page.messages,
+        ]);
+        let cursorId = get().cursorByRoom[key] ?? 0;
+        if (cursorId <= 0) {
+          cursorId = merged.reduce((oldest, message) => {
+            if (message.backendId <= 0) return oldest;
+            return oldest <= 0 || message.backendId < oldest
+              ? message.backendId
+              : oldest;
+          }, 0);
+        }
+        let hasOlder = get().hasMoreByRoom[key] ?? cursorId > 0;
+        const seenOlderCursors = new Set<number>();
+
+        while (!targetMsg && hasOlder && cursorId > 0) {
+          if (seenOlderCursors.has(cursorId)) {
+            hasOlder = false;
+            break;
+          }
+          seenOlderCursors.add(cursorId);
+
+          const olderPage = await fetchChatMessages({
+            room: targetRoom,
+            cursorId,
+            pageSize: JUMP_FILL_PAGE_SIZE,
+          });
+          if (
+            (get().roomEpoch[key] ?? 0) !== myEpoch ||
+            get().jumpTarget?.requestId !== nextRequestId
+          ) {
+            return;
+          }
+
+          page = olderPage;
+          merged = uniqueSortedMessages([...olderPage.messages, ...merged]);
+          targetMsg = findDateTarget(merged);
+          const nextCursorId = olderPage.prevCursorId || olderPage.nextCursorId;
+          const cursorProgressed =
+            olderPage.messages.length > 0 &&
+            nextCursorId > 0 &&
+            nextCursorId !== cursorId &&
+            !seenOlderCursors.has(nextCursorId);
+          cursorId = nextCursorId;
+          hasOlder = olderPage.hasOlder && cursorProgressed;
+
+          set((state) => ({
+            messagesByRoom: {
+              ...state.messagesByRoom,
+              [key]: merged,
+            },
+            cursorByRoom: {
+              ...state.cursorByRoom,
+              [key]: cursorId,
+            },
+            hasMoreByRoom: {
+              ...state.hasMoreByRoom,
+              [key]: hasOlder,
+            },
+          }));
+
+          if (!cursorProgressed) break;
+        }
+
+        if (targetMsg) {
+          const resolvedTargetMsg = targetMsg;
+          set((state) => ({
+            isLoadingMessagesByRoom: {
+              ...state.isLoadingMessagesByRoom,
+              [key]: false,
+            },
+            hasNewerByRoom: {
+              ...state.hasNewerByRoom,
+              [key]: true,
+            },
+            jumpTarget: {
+              roomKey: key,
+              messageId: resolvedTargetMsg.id,
+              backendId: resolvedTargetMsg.backendId,
+              date,
+              requestId: nextRequestId,
+            },
+          }));
+          return;
+        }
+      }
+
+      if (!targetMsg) {
+        set((state) => ({
+          error: page.messages.length === 0 ? "该日期暂无聊天记录" : "未能定位到该日期的目标消息",
+          isLoadingMessagesByRoom: {
+            ...state.isLoadingMessagesByRoom,
+            [key]: false,
+          },
+          jumpTarget: null,
+        }));
+        return;
+      }
+
       const sorted = uniqueSortedMessages(page.messages);
 
       set((state) => ({
@@ -626,16 +855,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...state.isLoadingMessagesByRoom,
           [key]: false,
         },
-        jumpTargetMessageId: targetMessageId,
+        jumpTarget: {
+          roomKey: key,
+          messageId: targetMsg.id,
+          backendId: targetMsg.backendId,
+          date,
+          requestId: nextRequestId,
+        },
         dateJumpModalOpen: false,
       }));
     } catch (err) {
+      if (
+        (get().roomEpoch[key] ?? 0) !== myEpoch ||
+        get().jumpTarget?.requestId !== nextRequestId
+      ) {
+        return;
+      }
       set((state) => ({
-        error: err instanceof Error ? err.message : "Failed to load messages for this date",
+        error: err instanceof Error ? err.message : "加载该日期消息失败",
         isLoadingMessagesByRoom: {
           ...state.isLoadingMessagesByRoom,
           [key]: false,
         },
+        jumpTarget: null,
       }));
     }
   },
@@ -645,24 +887,114 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!targetRoom) return;
 
     const key = roomKey(targetRoom);
-    if (get().isLoadingMessagesByRoom[key]) return;
+    const nextRequestId = ++jumpRequestIdCounter;
+    const currentEpoch = get().roomEpoch[key] ?? 0;
+    const myEpoch = currentEpoch + 1;
 
+    // 发起时立即置位跳转锁与代次
     set((state) => ({
+      roomEpoch: {
+        ...state.roomEpoch,
+        [key]: myEpoch,
+      },
+      jumpTarget: {
+        roomKey: key,
+        messageId: null,
+        backendId: message.backendId,
+        requestId: nextRequestId,
+      },
       isLoadingMessagesByRoom: {
         ...state.isLoadingMessagesByRoom,
         [key]: true,
       },
+      isLoadingMore: false,
+      isLoadingNewer: false,
       error: null,
+      searchDrawerOpen: false,
+      mediaGalleryDrawerOpen: false,
     }));
 
     try {
-      const page = await fetchChatMessages({
+      let page = await fetchChatMessages({
         room: targetRoom,
         anchorId: message.backendId,
         direction: "around",
         pageSize: PAGE_SIZE,
       });
-      const sorted = uniqueSortedMessages(page.messages);
+
+      // 竞态校验：代次或 requestId 不匹配则直接丢弃
+      if (
+        (get().roomEpoch[key] ?? 0) !== myEpoch ||
+        get().jumpTarget?.requestId !== nextRequestId
+      ) {
+        return;
+      }
+
+      // 通过实际返回的权威消息数组匹配 backendId 或 id，绝不静默回退
+      const requestedBackendId = Number(message.backendId);
+      const targetMsg =
+        requestedBackendId > 0
+          ? page.messages.find((m) => Number(m.backendId) === requestedBackendId) ?? message
+          : page.messages.find((m) => m.id === message.id) ?? message;
+
+      if (!targetMsg) {
+        set((state) => ({
+          error: "未能定位到目标消息",
+          isLoadingMessagesByRoom: {
+            ...state.isLoadingMessagesByRoom,
+            [key]: false,
+          },
+          jumpTarget: null,
+        }));
+        return;
+      }
+
+      // 相册/搜索跳转也补齐目标之后的所有消息。around 只返回目标附近的一页，
+      // 如果直接提交这页，滚动条底部只是局部窗口而不是最新消息。
+      let messagesForJump = uniqueSortedMessages(
+        page.messages.some((m) => m.id === targetMsg.id)
+          ? page.messages
+          : [...page.messages, targetMsg],
+      );
+      const olderCursor = page.prevCursorId;
+      const hasOlder = page.hasOlder;
+      let hasNewer = page.hasNewer;
+      let newerCursor = page.nextCursorId;
+      const seenNewerCursors = new Set<number>();
+      while (hasNewer && newerCursor > 0) {
+        if (seenNewerCursors.has(newerCursor)) break;
+        seenNewerCursors.add(newerCursor);
+
+        const newerPage = await fetchChatMessages({
+          room: targetRoom,
+          cursorId: newerCursor,
+          direction: "newer",
+          pageSize: JUMP_FILL_PAGE_SIZE,
+        });
+        if (
+          (get().roomEpoch[key] ?? 0) !== myEpoch ||
+          get().jumpTarget?.requestId !== nextRequestId
+        ) {
+          return;
+        }
+
+        page = newerPage;
+        messagesForJump = uniqueSortedMessages([
+          ...messagesForJump,
+          ...newerPage.messages,
+        ]);
+        hasNewer = newerPage.hasNewer;
+        const nextCursorId = newerPage.nextCursorId;
+        const cursorProgressed =
+          newerPage.messages.length > 0 &&
+          nextCursorId > 0 &&
+          nextCursorId !== newerCursor &&
+          !seenNewerCursors.has(nextCursorId);
+        newerCursor = nextCursorId;
+        if (!cursorProgressed) break;
+      }
+
+      const sorted = messagesForJump;
 
       set((state) => ({
         messagesByRoom: {
@@ -671,7 +1003,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
         cursorByRoom: {
           ...state.cursorByRoom,
-          [key]: page.prevCursorId,
+          [key]: olderCursor,
         },
         newerCursorByRoom: {
           ...state.newerCursorByRoom,
@@ -679,27 +1011,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
         hasMoreByRoom: {
           ...state.hasMoreByRoom,
-          [key]: page.hasOlder,
+          [key]: hasOlder,
         },
         hasNewerByRoom: {
           ...state.hasNewerByRoom,
-          [key]: page.hasNewer,
+          [key]: hasNewer,
         },
         isLoadingMessagesByRoom: {
           ...state.isLoadingMessagesByRoom,
           [key]: false,
         },
-        jumpTargetMessageId: message.id,
+        jumpTarget: {
+          roomKey: key,
+          messageId: targetMsg.id,
+          backendId: targetMsg.backendId,
+          requestId: nextRequestId,
+        },
         searchDrawerOpen: false,
         mediaGalleryDrawerOpen: false,
       }));
     } catch (err) {
+      if (
+        (get().roomEpoch[key] ?? 0) !== myEpoch ||
+        get().jumpTarget?.requestId !== nextRequestId
+      ) {
+        return;
+      }
       set((state) => ({
-        error: err instanceof Error ? err.message : "Failed to jump to message",
+        error: err instanceof Error ? err.message : "跳转到目标消息失败",
         isLoadingMessagesByRoom: {
           ...state.isLoadingMessagesByRoom,
           [key]: false,
         },
+        jumpTarget: null,
       }));
     }
   },
@@ -761,9 +1105,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         content: trimmed,
         type: "text",
         createdAt: now,
-        senderId: get().userProfile?.userId || "user_me",
-        senderName: get().userProfile?.displayName || "我",
-        senderKind: "member",
+        senderId: "me",
+        senderName: "me",
       };
 
       set((state) => {
@@ -775,11 +1118,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
             [key]: merged,
           },
           messageGroups: groupMessagesByDate(merged),
-          scrollToBottomToken: state.scrollToBottomToken + 1,
         };
       });
+
+      // 滚动到底部
+      set((state) => ({
+        scrollToBottomToken: state.scrollToBottomToken + 1,
+      }));
     } catch (err) {
-      throw new Error(err instanceof Error ? err.message : "发送消息失败");
+      set({
+        error: err instanceof Error ? err.message : "发送消息失败",
+      });
+      throw err;
     }
   },
 
@@ -788,6 +1138,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!targetRoom || targetRoom.category === "prime") return;
 
     const key = roomKey(targetRoom);
+    // 若当前房间处于跳转中或 loading 中，跳过轮询
+    if (get().jumpTarget && get().jumpTarget?.roomKey === key) return;
+    if (get().isLoadingMessagesByRoom[key]) return;
+    if (get().hasNewerByRoom[key]) return;
+
+    const myEpoch = get().roomEpoch[key] ?? 0;
     const existing = get().messagesByRoom[key] ?? [];
     if (existing.length === 0) return;
 
@@ -815,10 +1171,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         pageSize: 50,
       });
 
+      if ((get().roomEpoch[key] ?? 0) !== myEpoch) return;
+      if (get().jumpTarget && get().jumpTarget?.roomKey === key) return;
       if (page.messages.length === 0) return;
 
       set((state) => {
-        const merged = uniqueSortedMessages([...existing, ...page.messages]);
+        if ((state.roomEpoch[key] ?? 0) !== myEpoch) return state;
+        if (state.jumpTarget && state.jumpTarget?.roomKey === key) return state;
+
+        const currentMessages = state.messagesByRoom[key] ?? [];
+        const merged = uniqueSortedMessages([...currentMessages, ...page.messages]);
         return {
           messagesByRoom: {
             ...state.messagesByRoom,
@@ -840,67 +1202,45 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  clearJumpTarget: () => {
-    set({ jumpTargetMessageId: null });
+  clearJumpTarget: (requestId?: number) => {
+    set((state) => {
+      if (!requestId || state.jumpTarget?.requestId === requestId) {
+        return { jumpTarget: null };
+      }
+      return state;
+    });
   },
 
   requestScrollToBottom: async () => {
     const targetRoom = get().selectedRoom;
     if (!targetRoom) return;
-    if (get().hasNewerByRoom[roomKey(targetRoom)]) {
+    const key = roomKey(targetRoom);
+    if (get().jumpTarget?.roomKey === key) return;
+    if (get().hasNewerByRoom[key]) {
       await get().loadLatestMessages(targetRoom);
     }
-    set((state) => ({ scrollToBottomToken: state.scrollToBottomToken + 1 }));
+    set((state) => ({
+      scrollToBottomToken: state.scrollToBottomToken + 1,
+    }));
   },
 
-  setError: (error: string | null) => {
-    set({ error });
-  },
+  setError: (error) => set({ error }),
 
-  setSearchDrawerOpen: (open: boolean) => {
-    set({ searchDrawerOpen: open });
-    if (!open) {
-      get().clearSearch();
-    }
-  },
+  setSearchDrawerOpen: (open) => set({ searchDrawerOpen: open }),
+  setMediaGalleryDrawerOpen: (open) => set({ mediaGalleryDrawerOpen: open }),
+  setDateJumpModalOpen: (open) => set({ dateJumpModalOpen: open }),
+  setAboutModalOpen: (open) => set({ aboutModalOpen: open }),
 
-  setMediaGalleryDrawerOpen: (open: boolean) => {
-    set({ mediaGalleryDrawerOpen: open });
-    if (open) {
-      void get().loadRoomMedia(get().selectedRoom || undefined);
-    }
-  },
-
-  setDateJumpModalOpen: (open: boolean) => {
-    set({ dateJumpModalOpen: open });
-    if (open) {
-      void get().loadRoomAvailableDates(get().selectedRoom || undefined);
-    }
-  },
-
-  setAboutModalOpen: (open: boolean) => {
-    set({ aboutModalOpen: open });
-  },
-
-  openLightbox: (media: MediaItem) => {
-    set({ lightboxMedia: media });
-  },
-
-  closeLightbox: () => {
-    set({ lightboxMedia: null });
-  },
-
-  stepLightbox: (delta: number) => {
-    const { lightboxMedia, mediaList } = get();
-    if (!lightboxMedia || mediaList.length === 0) return;
-    const currentIndex = mediaList.findIndex((m) => m.id === lightboxMedia.id);
-    if (currentIndex === -1) return;
-
-    let nextIndex = currentIndex + delta;
-    if (nextIndex < 0) nextIndex = mediaList.length - 1;
-    if (nextIndex >= mediaList.length) nextIndex = 0;
-
-    set({ lightboxMedia: mediaList[nextIndex] });
+  openLightbox: (media) => set({ lightboxMedia: media }),
+  closeLightbox: () => set({ lightboxMedia: null }),
+  stepLightbox: (delta) => {
+    const current = get().lightboxMedia;
+    const list = get().mediaList;
+    if (!current || list.length === 0) return;
+    const idx = list.findIndex((m) => m.id === current.id);
+    if (idx === -1) return;
+    const nextIdx = (idx + delta + list.length) % list.length;
+    set({ lightboxMedia: list[nextIdx] });
   },
 }));
 

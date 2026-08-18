@@ -274,8 +274,22 @@ func findFirstMessageIDByDate(userID string, chatRoomID string, msgType int32, d
 	}
 	end := start.Add(24 * time.Hour)
 
+	// 新旧本地数据库中 send_time 可能分别保存为秒或毫秒；部分旧记录还只
+	// 保留了 time_str。日期跳转必须覆盖这三种格式，否则日历能显示日期，
+	// 但 around 查询会找不到对应 anchor。
+	startSeconds := start.Unix()
+	endSeconds := end.Unix()
+	startMillis := start.UnixNano() / int64(time.Millisecond)
+	endMillis := end.UnixNano() / int64(time.Millisecond)
 	query := baseMessageQuery(userID, chatRoomID, msgType).
-		Where("send_time >= ? AND send_time < ?", start.Unix(), end.Unix())
+		Where(`
+			(send_time >= ? AND send_time < ?) OR
+			(send_time >= ? AND send_time < ?) OR
+			time_str LIKE ?`,
+			startSeconds, endSeconds,
+			startMillis, endMillis,
+			date+"%",
+		)
 	var msg dal.ChatMessage
 	if err := query.Order("send_time asc, id asc").Limit(1).Find(&msg).Error; err != nil {
 		return 0, err
@@ -320,16 +334,65 @@ func queryChatMessages(userID string, chatRoomID string, msgType int32, cursorID
 		if !found {
 			return []dal.ChatMessage{}, false, false, nil
 		}
-		msgs := make([]dal.ChatMessage, 0, limit)
-		if err := messagesAtOrAfter(query, anchor).Order("send_time asc, id asc").Limit(limit).Find(&msgs).Error; err != nil {
+		// 保证至少为 anchor 自身预留 1 条配额，前半段最多取 (pageSize - 1) / 2 条
+		targetTotal := int(pageSize)
+		if targetTotal < 1 {
+			targetTotal = 1
+		}
+		halfBefore := (targetTotal - 1) / 2
+
+		// 1. 取 anchor 前面的消息（按倒序查出再翻转）
+		beforeMsgs := make([]dal.ChatMessage, 0, halfBefore)
+		if halfBefore > 0 {
+			if err := messagesBefore(query, anchor).Order("send_time desc, id desc").Limit(halfBefore).Find(&beforeMsgs).Error; err != nil {
+				return nil, false, false, err
+			}
+			reverseChatMessages(beforeMsgs)
+		}
+
+		// 2. 取 anchor 及之后的消息（保证 neededAfter >= 1，必定包含 anchor 自己）
+		neededAfter := targetTotal - len(beforeMsgs)
+		if neededAfter < 1 {
+			neededAfter = 1
+		}
+		atOrAfterMsgs := make([]dal.ChatMessage, 0, neededAfter+1)
+		if err := messagesAtOrAfter(query, anchor).Order("send_time asc, id asc").Limit(neededAfter + 1).Find(&atOrAfterMsgs).Error; err != nil {
 			return nil, false, false, err
 		}
-		hasNewer := len(msgs) > int(pageSize)
+		hasNewer := len(atOrAfterMsgs) > neededAfter
 		if hasNewer {
-			msgs = msgs[:pageSize]
+			atOrAfterMsgs = atOrAfterMsgs[:neededAfter]
 		}
+
+		// 3. 若向后不够（靠后位置），且向前有更多记录，向前多取补足至 targetTotal
+		if len(beforeMsgs)+len(atOrAfterMsgs) < targetTotal {
+			missing := targetTotal - (len(beforeMsgs) + len(atOrAfterMsgs))
+			oldestAnchor := anchor
+			if len(beforeMsgs) > 0 {
+				oldestAnchor = beforeMsgs[0]
+			}
+			extraBefore := make([]dal.ChatMessage, 0, missing)
+			if err := messagesBefore(query, oldestAnchor).Order("send_time desc, id desc").Limit(missing).Find(&extraBefore).Error; err != nil {
+				return nil, false, false, err
+			}
+			if len(extraBefore) > 0 {
+				reverseChatMessages(extraBefore)
+				beforeMsgs = append(extraBefore, beforeMsgs...)
+			}
+		}
+
+		msgs := append(beforeMsgs, atOrAfterMsgs...)
 		hasOlder, err := hasMessageBefore(userID, chatRoomID, msgType, oldestMessageID(msgs))
-		return msgs, hasOlder, hasNewer, err
+		if err != nil {
+			return nil, false, false, err
+		}
+		if !hasNewer {
+			hasNewer, err = hasMessageAfter(userID, chatRoomID, msgType, newestMessageID(msgs))
+			if err != nil {
+				return nil, false, false, err
+			}
+		}
+		return msgs, hasOlder, hasNewer, nil
 	default:
 		if cursorID > 0 {
 			cursor, found, err := findChatMessageCursor(userID, chatRoomID, msgType, cursorID)
@@ -468,6 +531,12 @@ func newestMessageID(msgs []dal.ChatMessage) int64 {
 	return newest.Id
 }
 
+func reverseChatMessages(msgs []dal.ChatMessage) {
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+}
+
 // HandleGetChatMedia 根据 chat_message_id 查本地文件并返回。
 // 路由建议：GET /media/:file，其中 :file 形如 {chat_message_id}.mp4 / {chat_message_id}.jpeg
 func HandleGetChatMedia(ctx context.Context, c *app.RequestContext) {
@@ -511,36 +580,6 @@ func HandleGetChatMedia(ctx context.Context, c *app.RequestContext) {
 	// Hertz uses a file stream here and keeps byte-range requests for video previews.
 	c.Response.Header.Set("Cache-Control", "private, max-age=86400")
 	c.File(mediaPath)
-}
-
-// HandleDownloadVideo 兼容历史路由：GET /api/video/download?message_id=xxx
-func HandleDownloadVideo(ctx context.Context, c *app.RequestContext) {
-	msgID := strings.TrimSpace(string(c.Query("message_id")))
-	if msgID == "" {
-		c.JSON(consts.StatusOK, BadResp("message_id 不能为空"))
-		return
-	}
-	msg, err := getChatMessageByID(msgID)
-	if err != nil {
-		c.JSON(consts.StatusOK, BadResp(err.Error()))
-		return
-	}
-	if msg.ChatMessageId == "" {
-		c.JSON(consts.StatusOK, BadResp("message_id 不存在"))
-		return
-	}
-	if msg.VideoPath == "" {
-		c.JSON(consts.StatusOK, BadResp("video_path 为空"))
-		return
-	}
-	data, err := os.ReadFile(msg.VideoPath)
-	if err != nil {
-		c.JSON(consts.StatusOK, BadResp("读取视频失败"))
-		return
-	}
-	c.SetContentType("video/mp4")
-	c.SetStatusCode(consts.StatusOK)
-	_, _ = c.Write(data)
 }
 
 func parseInt32Query(c *app.RequestContext, key string, def int32) (int32, error) {

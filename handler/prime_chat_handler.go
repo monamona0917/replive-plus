@@ -330,17 +330,65 @@ func queryPrimeChatMessages(chatRoomID, bodyType string, cursorID, anchorID int6
 		if err != nil || anchor == nil {
 			return []dal.PrimeChatMessage{}, false, false, err
 		}
-		messages := make([]dal.PrimeChatMessage, 0, limit)
-		query := primeAtOrAfter(primeBaseMessageQuery(chatRoomID, bodyType), *anchor)
-		if err := query.Order("create_unix_time_ms ASC, id ASC").Limit(limit).Find(&messages).Error; err != nil {
+		// 保证至少为 anchor 自身预留 1 条配额，前半段最多取 (pageSize - 1) / 2 条
+		targetTotal := int(pageSize)
+		if targetTotal < 1 {
+			targetTotal = 1
+		}
+		halfBefore := (targetTotal - 1) / 2
+
+		// 1. 取 anchor 前面的消息（按倒序查出再翻转）
+		beforeMsgs := make([]dal.PrimeChatMessage, 0, halfBefore)
+		if halfBefore > 0 {
+			if err := primeBefore(primeBaseMessageQuery(chatRoomID, bodyType), *anchor).Order("create_unix_time_ms DESC, id DESC").Limit(halfBefore).Find(&beforeMsgs).Error; err != nil {
+				return nil, false, false, err
+			}
+			reversePrimeMessages(beforeMsgs)
+		}
+
+		// 2. 取 anchor 及之后的消息（保证 neededAfter >= 1，必定包含 anchor 自己）
+		neededAfter := targetTotal - len(beforeMsgs)
+		if neededAfter < 1 {
+			neededAfter = 1
+		}
+		atOrAfterMsgs := make([]dal.PrimeChatMessage, 0, neededAfter+1)
+		if err := primeAtOrAfter(primeBaseMessageQuery(chatRoomID, bodyType), *anchor).Order("create_unix_time_ms ASC, id ASC").Limit(neededAfter + 1).Find(&atOrAfterMsgs).Error; err != nil {
 			return nil, false, false, err
 		}
-		hasNewer := len(messages) > int(pageSize)
+		hasNewer := len(atOrAfterMsgs) > neededAfter
 		if hasNewer {
-			messages = messages[:pageSize]
+			atOrAfterMsgs = atOrAfterMsgs[:neededAfter]
 		}
+
+		// 3. 若向后不够，且向前有更多记录，向前多取补足至 targetTotal
+		if len(beforeMsgs)+len(atOrAfterMsgs) < targetTotal {
+			missing := targetTotal - (len(beforeMsgs) + len(atOrAfterMsgs))
+			oldestAnchor := *anchor
+			if len(beforeMsgs) > 0 {
+				oldestAnchor = beforeMsgs[0]
+			}
+			extraBefore := make([]dal.PrimeChatMessage, 0, missing)
+			if err := primeBefore(primeBaseMessageQuery(chatRoomID, bodyType), oldestAnchor).Order("create_unix_time_ms DESC, id DESC").Limit(missing).Find(&extraBefore).Error; err != nil {
+				return nil, false, false, err
+			}
+			if len(extraBefore) > 0 {
+				reversePrimeMessages(extraBefore)
+				beforeMsgs = append(extraBefore, beforeMsgs...)
+			}
+		}
+
+		messages := append(beforeMsgs, atOrAfterMsgs...)
 		hasOlder, err := hasPrimeMessageBefore(chatRoomID, bodyType, firstPrimeMessage(messages))
-		return messages, hasOlder, hasNewer, err
+		if err != nil {
+			return nil, false, false, err
+		}
+		if !hasNewer {
+			hasNewer, err = hasPrimeMessageAfter(chatRoomID, bodyType, lastPrimeMessage(messages))
+			if err != nil {
+				return nil, false, false, err
+			}
+		}
+		return messages, hasOlder, hasNewer, nil
 	}
 
 	query := primeBaseMessageQuery(chatRoomID, bodyType)

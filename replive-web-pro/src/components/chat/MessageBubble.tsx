@@ -1,4 +1,4 @@
-﻿import { ExternalLink, Play } from "lucide-react";
+import { ExternalLink, Play } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 import { cn, formatTimeStr } from "../../lib/utils";
 import useChatStore from "../../stores/chat-store";
@@ -8,6 +8,7 @@ interface MessageBubbleProps {
   message: Message;
   room: ChatRoom;
   userProfile: UserProfile | null;
+  isHighlighted?: boolean;
 }
 
 function useFallbackMediaSource(primary?: string, fallback?: string) {
@@ -27,11 +28,8 @@ function useFallbackMediaSource(primary?: string, fallback?: string) {
 }
 
 export const MessageBubble = memo(
-  ({ message, room, userProfile }: MessageBubbleProps) => {
+  ({ message, room, userProfile, isHighlighted }: MessageBubbleProps) => {
     const openLightbox = useChatStore((s) => s.openLightbox);
-    const isJumpTarget = useChatStore(
-      (s) => s.jumpTargetMessageId === message.id,
-    );
     const { mediaSrc, fallbackToRemote } = useFallbackMediaSource(
       message.mediaUrl,
       message.mediaFallbackUrl,
@@ -88,10 +86,11 @@ export const MessageBubble = memo(
     return (
       <div
         id={`msg-${message.id}`}
+        data-backend-id={message.backendId > 0 ? message.backendId : undefined}
         className={cn(
           "group flex items-start gap-3 py-1.5 px-2 transition-all duration-300 rounded-xl",
           isMine ? "flex-row-reverse" : "flex-row",
-          isJumpTarget && "msg-jump-highlight",
+          isHighlighted && "ring-2 ring-primary ring-offset-2 ring-offset-background bg-primary/5 rounded-2xl animate-pulse",
         )}
       >
         {/* Avatar */}
@@ -130,8 +129,11 @@ export const MessageBubble = memo(
               {formatTimeStr(message.createdAt)}
             </span>
             {isReadByTalent && (
-              <span className="text-[11px] text-muted-foreground font-medium">
-                {"\u65e2\u8aad"}
+              <span
+                className="text-[10px] text-primary/80 font-mono"
+                title="主播最后进房时间在此条之后"
+              >
+                既読
               </span>
             )}
           </div>
@@ -145,10 +147,23 @@ export const MessageBubble = memo(
                 : "bg-card text-card-foreground border border-border/50 rounded-tl-xs",
             )}
           >
+            {/* Coin Amount (Prime Chat) */}
+            {typeof message.coinAmount === "number" &&
+              message.coinAmount > 0 && (
+                <div className="px-3.5 pt-2 pb-0 text-[11px] font-semibold text-amber-300 flex items-center gap-1">
+                  <span>🪙 {message.coinAmount} coins</span>
+                </div>
+              )}
+
             {/* Text Message */}
             {message.type === "text" && (
               <div className="px-3.5 py-2.5">
-                <p className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words select-text">
+                <p
+                  className={cn(
+                    "text-[13.5px] leading-relaxed whitespace-pre-wrap break-words select-text",
+                    message.isDeleted && "italic text-muted-foreground text-xs",
+                  )}
+                >
                   {message.content}
                 </p>
               </div>
@@ -164,15 +179,13 @@ export const MessageBubble = memo(
                       tabIndex={0}
                       onClick={handleMediaClick}
                       onKeyDown={(e) => e.key === "Enter" && handleMediaClick()}
-                      className="cursor-pointer overflow-hidden w-[20rem] max-w-full max-h-[18rem] bg-muted/40 flex items-center justify-center"
+                      className="cursor-pointer overflow-hidden min-w-[180px] max-w-[280px] sm:max-w-[340px] max-h-[300px] min-h-[120px] bg-muted/40 flex items-center justify-center"
                     >
                       <img
                         src={mediaSrc}
                         alt="聊天图片"
-                        loading="eager"
-                        fetchPriority="high"
-                        className="w-full h-auto max-h-[18rem] object-cover transition-transform duration-300 hover:scale-[1.03]"
-                        decoding="sync"
+                        className="w-full h-full object-cover transition-transform duration-300 hover:scale-[1.03]"
+                        decoding="async"
                         onError={fallbackToRemote}
                       />
                       <div className="absolute inset-0 bg-black/0 group-hover/media:bg-black/15 transition-colors flex items-center justify-center opacity-0 group-hover/media:opacity-100">
@@ -187,46 +200,37 @@ export const MessageBubble = memo(
                       tabIndex={0}
                       onClick={handleMediaClick}
                       onKeyDown={(e) => e.key === "Enter" && handleMediaClick()}
-                      className="relative cursor-pointer w-[20rem] max-w-full aspect-video bg-black rounded-xl overflow-hidden flex items-center justify-center"
+                      className="cursor-pointer overflow-hidden w-[280px] sm:w-[340px] aspect-video max-h-[300px] bg-black/80 flex items-center justify-center relative group/video"
                     >
                       <video
-                        key={mediaSrc}
                         src={mediaSrc}
                         preload="metadata"
                         muted
-                        className="w-full h-full object-cover opacity-90"
+                        playsInline
+                        className="w-full h-full object-cover"
                         onError={fallbackToRemote}
                       />
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/25 group-hover/media:bg-black/40 transition-colors">
-                        <span className="p-3 rounded-full bg-white/25 text-white backdrop-blur-md shadow-lg group-hover/media:scale-110 transition-transform">
-                          <Play className="w-5 h-5 fill-white ml-0.5" />
+                      <div className="absolute inset-0 bg-black/30 group-hover/video:bg-black/40 transition-colors flex items-center justify-center">
+                        <span className="p-3 rounded-full bg-primary/90 text-primary-foreground shadow-lg backdrop-blur-xs group-hover/video:scale-110 transition-transform">
+                          <Play className="w-5 h-5 fill-current" />
                         </span>
                       </div>
                     </div>
                   )}
-
-                  {/* Caption text if any */}
-                  {message.content &&
-                    !message.content.startsWith("[") &&
-                    message.content.length > 0 && (
-                      <p className="px-3 py-2 text-xs text-muted-foreground bg-background/80 backdrop-blur-xs">
-                        {message.content}
-                      </p>
-                    )}
                 </div>
               )}
           </div>
 
+          {/* Reaction Emoji (Prime Chat) */}
           {message.reactionEmoji && (
             <div
               className={cn(
-                "mt-1 inline-flex items-center gap-1 rounded-full border border-border/70 bg-background px-2 py-0.5 text-sm leading-none shadow-xs",
+                "mt-1 px-2 py-0.5 rounded-full bg-muted border border-border/60 text-xs flex items-center gap-1 shadow-2xs",
                 isMine ? "self-end" : "self-start",
               )}
               title={reactionLabel}
-              aria-label={reactionLabel}
             >
-              <span aria-hidden="true">{message.reactionEmoji}</span>
+              <span>{message.reactionEmoji}</span>
             </div>
           )}
         </div>
@@ -234,7 +238,5 @@ export const MessageBubble = memo(
     );
   },
 );
-
-MessageBubble.displayName = "MessageBubble";
 
 export default MessageBubble;

@@ -182,6 +182,8 @@ export const MediaGalleryDrawer = () => {
       content: "",
       type: item.type,
       createdAt: item.createdAt,
+      mediaUrl: item.url,
+      mediaFallbackUrl: item.fallbackUrl,
       senderId: "",
       senderName: item.senderName,
     };

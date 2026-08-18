@@ -144,23 +144,6 @@ func createTable() error {
 	if err != nil {
 		return err
 	}
-	err = db.Exec(`CREATE TABLE IF NOT EXISTS live_streams (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT NOT NULL,
-    display_name TEXT NOT NULL,
-    title TEXT NOT NULL,
-    webrtc_url TEXT NOT NULL,
-    rtmp_url TEXT NOT NULL,
-    start_time INTEGER NOT NULL,
-    end_time INTEGER NOT NULL
-)`).Error
-	if err != nil {
-		return err
-	}
-	err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_live_streams_display_name ON live_streams(display_name);`).Error
-	if err != nil {
-		return err
-	}
 	err = db.Exec(`CREATE TABLE IF NOT EXISTS oshis (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     oshi_id TEXT NOT NULL,
@@ -478,19 +461,4 @@ type PrimeChatMessage struct {
 
 func (PrimeChatMessage) TableName() string {
 	return "prime_chat_messages"
-}
-
-type LiveStream struct {
-	Id          int64  `json:"id"`
-	UserId      string `json:"user_id"`
-	DisplayName string `json:"display_name"`
-	Title       string `json:"title"`
-	WebrtcUrl   string `json:"webrtc_url"`
-	RtmpUrl     string `json:"rtmp_url"`
-	StartTime   int64  `json:"start_time"`
-	EndTime     int64  `json:"end_time"`
-}
-
-func (c LiveStream) TableName() string {
-	return "live_streams"
 }

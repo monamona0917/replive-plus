@@ -423,21 +423,3 @@ func PostWithClient(httpClient *http.Client, url string, body protoreflect.Proto
 	}
 	return respBuf, nil
 }
-
-func PrintBuf(buf []byte) {
-	for _, b := range buf {
-		fmt.Print(b)
-		fmt.Print(" ")
-	}
-	fmt.Println("")
-	fmt.Println("done")
-}
-
-func unmarshalRequest(code string) error {
-	buf, err := base64.StdEncoding.DecodeString(code)
-	if err != nil {
-		return fmt.Errorf("failed to base64 decode code: %v, err: %v", code, err)
-	}
-	PrintBuf(buf)
-	return nil
-}

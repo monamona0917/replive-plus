@@ -100,7 +100,6 @@ func runMain() (exitCode int) {
 		}
 	}
 
-	//ffmpeg -i "rtmp://lvplay.rep_api.com/rep_api/4e20d62f-47da-4dca-8364-6e2cd3574f28?txSecret=e415ac573fd7d4e274d575584c0b52a842f6a09e44a9ccf2128eb1f97db29ffd&txTime=6A7735BD" -c copy ..\..\output.ts
 }
 
 func logPanic(recovered any) {
@@ -235,11 +234,5 @@ func registerRoutes(h *server.Hertz) {
 		primeGroup.GET("/search", handler.HandleSearchPrimeChatMessages)
 	}
 	h.GET("/api/user/me", handler.HandleGetCurrentUser)
-	h.GET("/api/translate", handler.HandleTranslate)
-
-	videoGroup := h.Group("/api/video")
-	{
-		videoGroup.GET("/download", handler.HandleDownloadVideo)
-	}
 
 }

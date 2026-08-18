@@ -1,4 +1,4 @@
-﻿export type ChatCategory = "fandom" | "prime";
+export type ChatCategory = "fandom" | "prime";
 
 export interface User {
   id: string;
@@ -149,4 +149,12 @@ export interface MediaItem {
   senderName: string;
   messageId: string;
   backendId: number;
+}
+
+export interface JumpTarget {
+  roomKey: string;
+  messageId: string | null;
+  backendId?: number;
+  date?: string;
+  requestId: number;
 }
