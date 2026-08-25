@@ -22,15 +22,23 @@ export const AppLayout = () => {
     void loadUserProfile();
   }, [loadRooms, loadUserProfile]);
 
-  // 后台轮询新消息（每 15 秒增量拉取）
+  // 后台轮询当前房间的新消息（每 3 秒增量拉取）
   useEffect(() => {
     if (!selectedRoom || selectedRoom.category === "prime") return;
     const interval = setInterval(() => {
       void pollNewMessages(selectedRoom);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [selectedRoom, pollNewMessages]);
+
+  // 房间列表单独低频刷新，消息轮询会同步更新已加载房间的摘要。
+  useEffect(() => {
+    if (!selectedRoom || selectedRoom.category === "prime") return;
+    const interval = setInterval(() => {
       void loadRooms();
     }, 15000);
     return () => clearInterval(interval);
-  }, [selectedRoom, pollNewMessages, loadRooms]);
+  }, [selectedRoom, loadRooms]);
 
   // 全局快捷键监听 (Ctrl+F 全局搜索)
   useEffect(() => {

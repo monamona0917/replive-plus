@@ -111,7 +111,7 @@ export const MessageBubble = memo(
         {/* Message Container */}
         <div
           className={cn(
-            "flex flex-col max-w-[82%] sm:max-w-[32rem] min-w-0",
+            "flex flex-col max-w-[85%] sm:max-w-[70%] lg:max-w-[55%] min-w-0",
             isMine ? "items-end" : "items-start",
           )}
         >

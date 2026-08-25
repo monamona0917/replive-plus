@@ -82,7 +82,7 @@ func runMain() (exitCode int) {
 		ConfigPath: configPath,
 	})
 
-	h := server.Default()
+	h := server.Default(server.WithHostPorts("127.0.0.1:8888"))
 
 	service.Init()
 

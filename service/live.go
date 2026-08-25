@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"net/url"
 	"replive/model"
 	"replive/rep_api"
@@ -29,33 +30,76 @@ var (
 	getStreamingLive  = rep_api.GetStreamingLive
 )
 
-// RunLiveRecorder owns live-status polling and ffmpeg recording. It is kept
-// outside the normal chat worker lifecycle so the main backend does not poll
-// live status unless this standalone worker is started.
+const (
+	LivePollingMinInterval = 5900 * time.Millisecond
+	LivePollingMaxInterval = 10 * time.Second
+)
+
+type liveMonitorState struct {
+	activeLives map[string]struct{}
+	initialized bool
+	queryFailed bool
+}
+
+var liveMonitorOnce sync.Once
+
+// StartLiveMonitor starts the live polling and recording loop in the backend.
+func StartLiveMonitor() {
+	liveMonitorOnce.Do(func() {
+		go func() {
+			if err := RunLiveRecorder(context.Background(), 0); err != nil {
+				hlog.Errorf("直播监听已停止：%v", err)
+			}
+		}()
+	})
+}
+
 func RunLiveRecorder(ctx context.Context, interval time.Duration) error {
-	if interval <= 0 {
-		interval = 2 * time.Second
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	initEmailSender()
 	startFfmpegWatcher()
-	hlog.Infof("live recorder started, polling interval: %s", interval)
-
-	if err := checkLive(); err != nil {
-		hlog.Errorf("initial live check failed: %v", err)
+	monitorState := &liveMonitorState{activeLives: make(map[string]struct{})}
+	intervalLabel := fmt.Sprintf("%s", interval)
+	if interval <= 0 {
+		intervalLabel = fmt.Sprintf("%s~%s", LivePollingMinInterval, LivePollingMaxInterval)
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			hlog.Infof("live recorder stopped")
-			return nil
-		case <-ticker.C:
-			if err := checkLive(); err != nil {
-				hlog.Errorf("live check failed: %v", err)
+	hlog.Infof("正在查看有没有女声优正在直播！（轮询间隔：%s）", intervalLabel)
+
+	poll := func() {
+		if err := checkLiveWithState(monitorState); err != nil {
+			if !monitorState.queryFailed {
+				hlog.Errorf("直播状态查询失败：%v", err)
+				monitorState.queryFailed = true
 			}
 		}
 	}
+	poll()
+	for {
+		wait := interval
+		if wait <= 0 {
+			wait = nextLivePollingInterval()
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return nil
+		case <-timer.C:
+			poll()
+		}
+	}
+}
+
+func nextLivePollingInterval() time.Duration {
+	span := int(LivePollingMaxInterval - LivePollingMinInterval)
+	return LivePollingMinInterval + time.Duration(rand.IntN(span+1))
 }
 
 func enqueueLiveRecord(nsyLiveInfo *NsyLiveInfo) error {
@@ -165,7 +209,6 @@ func scheduleLiveResume(nsyLiveInfo *NsyLiveInfo, delay time.Duration) {
 			hlog.Errorf("failed to resume live record, key: %s, err: %v", key, err)
 			return
 		}
-		hlog.Infof("resume live record queued, key: %s, delay: %s, segment: %d", key, delay, nsyLiveInfo.SegmentIndex)
 	}()
 }
 
@@ -195,48 +238,93 @@ func clearLiveCacheIfNeeded(now time.Time) {
 	knownLives.Clear()
 	sendLives.Clear()
 	liveCacheClearDay = day
-	hlog.Infof("live cache cleared at %s", now.Format("2006-01-02 15:04:05"))
 }
 
 func checkLive() error {
+	return checkLiveWithState(nil)
+}
+
+func checkLiveWithState(state *liveMonitorState) error {
 	clearLiveCacheIfNeeded(time.Now())
-	msgResp, err := rep_api.GetStreamingLive()
+	msgResp, err := getStreamingLive()
 	if err != nil {
 		return fmt.Errorf("failed to get streaming live: %v", err)
 	}
+	if msgResp == nil {
+		return fmt.Errorf("failed to get streaming live: empty response")
+	}
+	if state != nil && state.queryFailed {
+		hlog.Infof("直播状态查询已恢复")
+		state.queryFailed = false
+	}
+
+	currentLives := make(map[string]struct{})
 	for i, live := range msgResp.LiveInfo {
+		if live == nil {
+			hlog.Errorf("streaming live response contains nil live at index %d", i)
+			continue
+		}
 		if i >= len(msgResp.UserProfile) {
 			hlog.Errorf("streaming live response missing user profile for index %d", i)
 			continue
 		}
 		isFandomOnly := len(live.WebrtcUrl) == 0
 		nsyInfo := msgResp.UserProfile[i]
+		if nsyInfo == nil || nsyInfo.Info == nil {
+			hlog.Errorf("streaming live response missing user profile data for index %d", i)
+			continue
+		}
 		nsyLiveInfo, err := newLiveInfo(live, nsyInfo, time.Now())
 		if err != nil {
 			hlog.Errorf("failed to build live info, user: %s, err: %v", nsyInfo.Info.DisplayName, err)
 			continue
 		}
 		key := liveRecordKey(nsyLiveInfo)
+		currentLives[key] = struct{}{}
+
+		isNewLive := false
+		if state != nil {
+			_, wasActive := state.activeLives[key]
+			isNewLive = !state.initialized || !wasActive
+			if isNewLive {
+				logNewLive(nsyLiveInfo.Name)
+			}
+		}
+		if isNewLive {
+			if _, ok := sendLives.Load(key); !ok {
+				sendLiveEmail(live, nsyInfo, nsyLiveInfo.RtmpUrl, isFandomOnly)
+				sendLives.Store(key, true)
+			}
+		}
+		if isFandomOnly {
+			continue
+		}
 		if _, exist := knownLives.Load(key); exist {
 			continue
 		}
-		if _, ok := sendLives.Load(key); !ok {
-			sendLiveEmail(live, nsyInfo, nsyLiveInfo.RtmpUrl, isFandomOnly)
-			sendLives.Store(key, true)
-		}
-		if isFandomOnly {
-			hlog.Warnf("live %s is fandom only", nsyInfo.Info.DisplayName)
-			continue
-		}
-		hlog.Infof("%s start live, title: %s, \nrtmp url: %s", nsyInfo.Info.DisplayName, live.Title, nsyLiveInfo.RtmpUrl)
 		if err := enqueueLiveRecord(nsyLiveInfo); err != nil {
 			hlog.Errorf("queue live record failed, name: %s, err: %v", nsyInfo.Info.DisplayName, err)
 			continue
 		}
 		knownLives.Store(key, nsyLiveInfo)
 	}
+
+	if state != nil {
+		if len(currentLives) == 0 && (!state.initialized || len(state.activeLives) > 0) {
+			hlog.Infof("暂无女声优在直播！")
+		}
+		state.activeLives = currentLives
+		state.initialized = true
+	}
 	return nil
 }
+
+func logNewLive(name string) {
+	for i := 0; i < 3; i++ {
+		hlog.Infof("发现“%s”正在直播！", name)
+	}
+}
+
 func parseRtmpUrl(webrtcUrl string) (string, error) {
 	u, err := url.Parse(webrtcUrl)
 	if err != nil {

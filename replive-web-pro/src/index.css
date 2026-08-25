@@ -39,34 +39,35 @@
   --radius: 0.85rem;
 }
 
+/* Twitter/X Dim (Navy Midnight Blue) Theme */
 .dark {
-  --background: oklch(0.12 0.012 250);
-  --foreground: oklch(0.95 0.005 250);
-  --card: oklch(0.16 0.015 250);
-  --card-foreground: oklch(0.95 0.005 250);
-  --popover: oklch(0.15 0.015 250);
-  --popover-foreground: oklch(0.95 0.005 250);
-  --primary: oklch(0.66 0.20 255);
-  --primary-foreground: oklch(0.08 0.02 255);
-  --secondary: oklch(0.20 0.015 250);
-  --secondary-foreground: oklch(0.92 0.005 250);
-  --muted: oklch(0.17 0.012 250);
-  --muted-foreground: oklch(0.62 0.015 250);
-  --accent: oklch(0.22 0.03 255);
-  --accent-foreground: oklch(0.88 0.08 255);
+  --background: oklch(0.23 0.035 240);          /* #15202B - Twitter Dim Base Background */
+  --foreground: oklch(0.97 0.005 240);          /* #F7F9F9 - Crisp Clean White Text */
+  --card: oklch(0.27 0.035 240);                /* #1E2732 - Twitter Dim Card / Bubble Box */
+  --card-foreground: oklch(0.97 0.005 240);
+  --popover: oklch(0.25 0.035 240);             /* #192734 - Popovers & Drawers */
+  --popover-foreground: oklch(0.97 0.005 240);
+  --primary: oklch(0.68 0.17 240);              /* #1D9BF0 - Twitter Accent Sky Blue */
+  --primary-foreground: oklch(1 0 0);           /* Pure White */
+  --secondary: oklch(0.30 0.038 240);           /* Secondary Containers */
+  --secondary-foreground: oklch(0.94 0.01 240);
+  --muted: oklch(0.26 0.030 240);               /* Subtle Muted Fills */
+  --muted-foreground: oklch(0.68 0.025 240);    /* #8B98A5 - Twitter Blue-Gray Text */
+  --accent: oklch(0.32 0.045 240);              /* Hover / Active accents */
+  --accent-foreground: oklch(0.96 0.01 240);
   --destructive: oklch(0.62 0.22 25);
   --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.21 0.012 250);
-  --input: oklch(0.18 0.015 250);
-  --ring: oklch(0.66 0.20 255);
-  --sidebar: oklch(0.10 0.01 250);
-  --sidebar-foreground: oklch(0.92 0.005 250);
-  --sidebar-primary: oklch(0.66 0.20 255);
-  --sidebar-primary-foreground: oklch(0.08 0.02 255);
-  --sidebar-accent: oklch(0.18 0.025 255);
-  --sidebar-accent-foreground: oklch(0.88 0.08 255);
-  --sidebar-border: oklch(0.17 0.012 250);
-  --sidebar-ring: oklch(0.66 0.20 255);
+  --border: oklch(0.35 0.025 240);              /* #38444D / #2F3336 - Defined Subtle Borders */
+  --input: oklch(0.28 0.030 240);               /* Input Fields */
+  --ring: oklch(0.68 0.17 240);
+  --sidebar: oklch(0.19 0.032 240);             /* #10171E - Deep Navy Sidebar */
+  --sidebar-foreground: oklch(0.95 0.005 240);
+  --sidebar-primary: oklch(0.68 0.17 240);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.26 0.035 240);
+  --sidebar-accent-foreground: oklch(0.97 0.005 240);
+  --sidebar-border: oklch(0.30 0.025 240);
+  --sidebar-ring: oklch(0.68 0.17 240);
 }
 
 @theme inline {
@@ -111,6 +112,8 @@
 @layer base {
   * {
     @apply border-border outline-ring/40;
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--foreground) 30%, transparent) transparent;
   }
   html, body {
     @apply bg-background text-foreground;
@@ -125,12 +128,25 @@
     height: 100%;
     width: 100%;
   }
+
+  /* Enhanced text selection highlight */
+  ::selection {
+    background-color: color-mix(in oklch, var(--primary) 35%, transparent);
+    color: inherit;
+  }
+
+  /* Inside primary-colored blue message bubble (Mine): use translucent crisp white highlight */
+  .bg-primary ::selection,
+  [class*="bg-primary"] ::selection {
+    background-color: rgba(255, 255, 255, 0.38) !important;
+    color: #ffffff !important;
+  }
 }
 
-/* Custom modern scrollbars */
+/* Custom modern scrollbars with increased width & high contrast */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 9px;
+  height: 9px;
 }
 
 ::-webkit-scrollbar-track {
@@ -138,12 +154,23 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: color-mix(in oklch, var(--foreground) 15%, transparent);
+  background: color-mix(in oklch, var(--foreground) 26%, transparent);
   border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 0.2s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in oklch, var(--foreground) 30%, transparent);
+  background: color-mix(in oklch, var(--foreground) 48%, transparent);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: color-mix(in oklch, var(--foreground) 72%, transparent);
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 /* Message jump highlight animation */

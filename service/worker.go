@@ -72,6 +72,7 @@ func Init() {
 		hlog.Errorf("syncPrimeChatAtStartup failed, err: %v", err)
 	}
 	startWorkers()
+	StartLiveMonitor()
 }
 
 func startWorkers() {

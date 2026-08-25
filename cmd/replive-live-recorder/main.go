@@ -11,12 +11,11 @@ import (
 	"replive/service"
 	"replive/utils"
 	"syscall"
-	"time"
 )
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to config.yaml")
-	interval := flag.Duration("interval", 2*time.Second, "live status polling interval")
+	interval := flag.Duration("interval", 0, "live status polling interval; default is a random 5.9s-10s interval")
 	flag.Parse()
 
 	utils.UseJapanLocalTime()

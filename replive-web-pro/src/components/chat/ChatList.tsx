@@ -391,7 +391,7 @@ export const ChatList = () => {
           )}
           <div
             ref={messageContentRef}
-            className="flex flex-col justify-end min-h-full max-w-4xl mx-auto w-full"
+            className="flex flex-col justify-end min-h-full w-full max-w-none px-2 sm:px-6 lg:px-8"
           >
             {/* History End Badge */}
             {!hasMoreHistory && messageGroups.length > 0 && (

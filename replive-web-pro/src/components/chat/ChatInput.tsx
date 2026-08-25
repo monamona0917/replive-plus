@@ -65,7 +65,7 @@ export const ChatInput = () => {
 
   return (
     <footer className="border-t border-border/60 bg-background/80 backdrop-blur-lg px-3 sm:px-5 py-3">
-      <div className="flex items-end gap-2 max-w-4xl mx-auto">
+      <div className="flex items-end gap-2 w-full max-w-none px-1 sm:px-4">
         <div className="relative flex-1 rounded-2xl bg-card border border-border/80 shadow-xs focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all">
           <textarea
             ref={textareaRef}

@@ -37,10 +37,8 @@ func startFfmpegWatcher() {
 	ffmpegWatcherOnce.Do(func() {
 		liveRecordChannel = make(chan *NsyLiveInfo, 1000)
 		initFfmpeg()
-		hlog.Infof("ffmpeg path: %s, Starting ffmpeg watcher...", ffmpegPath)
 		go func() {
 			for nsyLiveInfo := range liveRecordChannel {
-				hlog.Info("start, receive")
 				if err := startFfmpegRecord(nsyLiveInfo); err != nil {
 					hlog.Errorf("Error starting ffmpeg record: %v", err)
 					go func(info *NsyLiveInfo) {
@@ -89,13 +87,13 @@ func startFfmpegRecord(nsyLiveInfo *NsyLiveInfo) error {
 		return fmt.Errorf("创建日志文件失败: %v", err)
 	}
 	cmd := exec.Command(ffmpegPath, buildFfmpegRecordArgs(nsyLiveInfo.RtmpUrl, outputFile)...)
-	hlog.Infof("start recording by command: %s", cmd.String())
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
 		return fmt.Errorf("ffmpeg start failed: %v", err)
 	}
+	hlog.Infof("开始录制“%s”！", nsyLiveInfo.Name)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -103,41 +101,26 @@ func startFfmpegRecord(nsyLiveInfo *NsyLiveInfo) error {
 			}
 		}()
 		defer logFile.Close()
-		hlog.Infof("ffmpeg 日志: %s", logFile.Name())
-
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
 
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 
-		hlog.Infof("[%s] 录制开始:", outputFile)
-
-		for {
-			select {
-			case <-ticker.C:
-				hlog.Infof("[%s] 录制中...日志: %s", outputFile, logFile.Name())
-			case err := <-done: // 进程结束处理
-				hlog.Infof("[%s] 录制结束:", outputFile)
-				if err != nil {
-					hlog.Errorf("[%s] 录制错误: %v", outputFile, err)
-				}
-				nextInfo, stillLive, checkErr := getResumeLiveInfo(nsyLiveInfo)
-				if checkErr != nil {
-					hlog.Errorf("[%s] check live after ffmpeg exit failed: %v", outputFile, checkErr)
-					scheduleLiveResume(cloneLiveInfoForResume(nsyLiveInfo), resumeDelay(nsyLiveInfo.SegmentIndex+1))
-					return
-				}
-				if stillLive {
-					hlog.Warnf("[%s] ffmpeg exited while live still active, resume recording", outputFile)
-					scheduleLiveResume(nextInfo, resumeDelay(nextInfo.SegmentIndex))
-					return
-				}
-				knownLives.Delete(liveRecordKey(nsyLiveInfo))
-				sendLiveEndEmail(nsyLiveInfo.Name, outputFile)
-				return
-			}
+		err := <-done // 进程结束处理
+		if err != nil {
+			hlog.Errorf("[%s] 录制错误: %v", outputFile, err)
 		}
+		nextInfo, stillLive, checkErr := getResumeLiveInfo(nsyLiveInfo)
+		if checkErr != nil {
+			hlog.Errorf("[%s] check live after ffmpeg exit failed: %v", outputFile, checkErr)
+			scheduleLiveResume(cloneLiveInfoForResume(nsyLiveInfo), resumeDelay(nsyLiveInfo.SegmentIndex+1))
+			return
+		}
+		if stillLive {
+			scheduleLiveResume(nextInfo, resumeDelay(nextInfo.SegmentIndex))
+			return
+		}
+		knownLives.Delete(liveRecordKey(nsyLiveInfo))
+		sendLiveEndEmail(nsyLiveInfo.Name, outputFile)
 	}()
 	return nil
 }
