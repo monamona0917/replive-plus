@@ -151,6 +151,41 @@ func TestGetResumeLiveInfoFromResponseFallsBackWhenWebrtcMissing(t *testing.T) {
 	}
 }
 
+func TestBuildLiveInfoWithStateClassifiesLiveResults(t *testing.T) {
+	now := time.Date(2026, 8, 26, 3, 0, 0, 0, time.UTC)
+	profile := &model.LiveUser{Info: &model.UserProfile{DisplayName: "tester"}}
+
+	fandomInfo, fandomState, err := buildLiveInfoWithState(&model.LiveStream{Title: "fandom"}, profile, now)
+	if err != nil {
+		t.Fatalf("FandomOnly build error = %v", err)
+	}
+	if fandomState != FandomOnly || fandomInfo.Name != "tester" || fandomInfo.RtmpUrl != "" {
+		t.Fatalf("FandomOnly result = %#v, state=%v", fandomInfo, fandomState)
+	}
+
+	readyInfo, readyState, err := buildLiveInfoWithState(&model.LiveStream{
+		Title:     "ready",
+		WebrtcUrl: "https://example.com/live?txSecret=abc&txTime=def",
+	}, profile, now)
+	if err != nil {
+		t.Fatalf("RecordingReady build error = %v", err)
+	}
+	if readyState != RecordingReady || readyInfo.RtmpUrl != "rtmp://example.com/live?txSecret=abc&txTime=def" {
+		t.Fatalf("RecordingReady result = %#v, state=%v", readyInfo, readyState)
+	}
+
+	failedInfo, failedState, err := buildLiveInfoWithState(&model.LiveStream{
+		Title:     "invalid",
+		WebrtcUrl: "not-a-valid-url",
+	}, profile, now)
+	if err == nil {
+		t.Fatal("RtmpParseFailed build error = nil")
+	}
+	if failedState != RtmpParseFailed || failedInfo.Name != "tester" || failedInfo.RtmpUrl != "" {
+		t.Fatalf("RtmpParseFailed result = %#v, state=%v", failedInfo, failedState)
+	}
+}
+
 func TestLiveRecordKeyPrefersStableIdentifiers(t *testing.T) {
 	info := &NsyLiveInfo{LiveStream: &model.LiveStream{LiveId: "live-3", UserId: "user-3"}, RtmpUrl: "rtmp://x"}
 	if got := liveRecordKey(info); got != "live:live-3" {

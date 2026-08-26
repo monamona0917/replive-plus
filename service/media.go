@@ -8,11 +8,37 @@ import (
 	"replive/rep_api"
 	"strings"
 	"time"
-
-	"github.com/cloudwego/hertz/pkg/common/hlog"
 )
 
 var fetchMedia = rep_api.Get
+
+type MediaResult int
+
+const (
+	MediaDownloaded MediaResult = iota
+	MediaSkipped
+	MediaFailed
+)
+
+type MediaSyncSummary struct {
+	Downloaded int
+	Skipped    int
+	Failed     int
+}
+
+func (s *MediaSyncSummary) Add(result MediaResult) {
+	if s == nil {
+		return
+	}
+	switch result {
+	case MediaDownloaded:
+		s.Downloaded++
+	case MediaSkipped:
+		s.Skipped++
+	case MediaFailed:
+		s.Failed++
+	}
+}
 
 func getImgFileName(mediaUrl string, imgTime time.Time, msgId string) (name string, path string, err error) {
 	var u *url.URL
@@ -31,29 +57,44 @@ func getImgFileName(mediaUrl string, imgTime time.Time, msgId string) (name stri
 }
 
 func DownloadImage(mediaUrl string, imgTime time.Time, pathPrefix string, msgId string) (string, error) {
+	path, _, err := DownloadImageWithResult(mediaUrl, imgTime, pathPrefix, msgId)
+	return path, err
+}
+
+func DownloadImageWithResult(mediaUrl string, imgTime time.Time, pathPrefix string, msgId string) (string, MediaResult, error) {
 	name, path, err := getImgFileName(mediaUrl, imgTime, msgId)
 	if err != nil {
-		return "", fmt.Errorf("failed to get img file name: %v", err)
+		return "", MediaFailed, fmt.Errorf("failed to get img file name: %v", err)
 	}
 	path = fmt.Sprintf("%s/%s", pathPrefix, path)
-	return downloadMedia(mediaUrl, path, name)
+	return downloadMediaWithResult(mediaUrl, path, name)
 }
 
 func DownloadVideo(mediaUrl string, videoTime time.Time, pathPrefix string, msgId string) (string, error) {
+	path, _, err := DownloadVideoWithResult(mediaUrl, videoTime, pathPrefix, msgId)
+	return path, err
+}
+
+func DownloadVideoWithResult(mediaUrl string, videoTime time.Time, pathPrefix string, msgId string) (string, MediaResult, error) {
 	path := fmt.Sprintf("%d/%d", videoTime.Year(), videoTime.Month())
 	path = fmt.Sprintf("%s/%s", pathPrefix, path)
 	name := fmt.Sprintf("%s_%s.mp4", videoTime.Format("2006-01-02"), msgId)
-	return downloadMedia(mediaUrl, path, name)
+	return downloadMediaWithResult(mediaUrl, path, name)
 }
 
 func DownloadProfileMedia(mediaUrl string, mediaTime time.Time, pathPrefix string, owner string, kind string) (string, error) {
+	path, _, err := DownloadProfileMediaWithResult(mediaUrl, mediaTime, pathPrefix, owner, kind)
+	return path, err
+}
+
+func DownloadProfileMediaWithResult(mediaUrl string, mediaTime time.Time, pathPrefix string, owner string, kind string) (string, MediaResult, error) {
 	name, err := getProfileMediaFileName(mediaUrl)
 	if err != nil {
-		return "", fmt.Errorf("failed to get profile media file name: %v", err)
+		return "", MediaFailed, fmt.Errorf("failed to get profile media file name: %v", err)
 	}
 	year, month := getProfileMediaYearMonth(mediaUrl, mediaTime)
 	path := filepath.Join(pathPrefix, sanitizeFileName(owner), year, month)
-	return downloadMedia(mediaUrl, path, name)
+	return downloadMediaWithResult(mediaUrl, path, name)
 }
 
 func getProfileMediaFileName(mediaUrl string) (string, error) {
@@ -142,26 +183,29 @@ func sanitizeFileName(s string) string {
 }
 
 func downloadMedia(media, path, name string) (string, error) {
+	filePath, _, err := downloadMediaWithResult(media, path, name)
+	return filePath, err
+}
+
+func downloadMediaWithResult(media, path, name string) (string, MediaResult, error) {
 	err := os.MkdirAll(path, 0755)
 	if err != nil {
-		return "", fmt.Errorf("failed to create dir: %v", err)
+		return "", MediaFailed, fmt.Errorf("failed to create dir: %v", err)
 	}
 	filePath := filepath.Join(path, name)
 	if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
-		hlog.Infof("skip existing media: %s", filePath)
-		return filePath, nil
+		return filePath, MediaSkipped, nil
 	} else if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("failed to stat media file: %v", err)
+		return "", MediaFailed, fmt.Errorf("failed to stat media file: %v", err)
 	}
 
 	body, err := fetchMedia(media)
 	if err != nil {
-		return "", fmt.Errorf("failed to get media: %v", err)
+		return "", MediaFailed, fmt.Errorf("failed to get media: %v", err)
 	}
-	hlog.Infof("download media: %s, path: %s, name: %s", media, path, name)
 	err = os.WriteFile(filePath, body, 0644)
 	if err != nil {
-		return "", fmt.Errorf("failed to write file: %v", err)
+		return "", MediaFailed, fmt.Errorf("failed to write file: %v", err)
 	}
-	return filePath, nil
+	return filePath, MediaDownloaded, nil
 }

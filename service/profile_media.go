@@ -15,22 +15,29 @@ import (
 
 const profileMediaMaxPages = 50
 
-func syncChatRoomProfileMedia(room *model.ChatRoom, now time.Time) {
+func syncChatRoomProfileMedia(room *model.ChatRoom, now time.Time) MediaSyncSummary {
 	if room == nil || room.UserProfile == nil {
-		return
+		return MediaSyncSummary{}
 	}
 	profile := room.UserProfile
 	owner := firstNonEmpty(profile.GetDisplayName(), profile.GetUniqueId(), profile.GetUserId(), room.GetUserId())
 	urls := map[string]string{
 		"chat_room_avatar": profile.GetAvatarUrl(),
 	}
-	downloadProfileURLSet(owner, urls, now)
+	return downloadProfileURLSet(owner, urls, now)
 }
 
 func syncOshiProfiles() error {
 	now := time.Now()
 	syncedCount := 0
+	oshiMediaSummary := MediaSyncSummary{}
+	followingMediaSummary := MediaSyncSummary{}
+	followingCount := 0
 	pageToken := ""
+	defer func() {
+		logMediaSyncSummary("Oshi profile media sync", oshiMediaSummary)
+		logMediaSyncSummary("Following profile media sync", followingMediaSummary)
+	}()
 
 	for page := 0; page < profileMediaMaxPages; page++ {
 		resp, err := rep_api.ListMyOshis(200, pageToken)
@@ -49,7 +56,7 @@ func syncOshiProfiles() error {
 			return err
 		}
 		for _, item := range items {
-			downloadProfileURLSet(oshiOwner(item), oshiMediaURLs(item), now)
+			mergeMediaSummary(&oshiMediaSummary, downloadProfileURLSet(oshiOwner(item), oshiMediaURLs(item), now))
 		}
 		syncedCount += len(items)
 
@@ -60,7 +67,7 @@ func syncOshiProfiles() error {
 		pageToken = nextToken
 	}
 
-	followingCount, err := syncFollowings(now)
+	followingCount, followingMediaSummary, err := syncFollowings(now)
 	if err != nil {
 		return err
 	}
@@ -69,14 +76,15 @@ func syncOshiProfiles() error {
 	return nil
 }
 
-func syncFollowings(now time.Time) (int, error) {
+func syncFollowings(now time.Time) (int, MediaSyncSummary, error) {
 	syncedCount := 0
+	mediaSummary := MediaSyncSummary{}
 	pageToken := ""
 
 	for page := 0; page < profileMediaMaxPages; page++ {
 		resp, err := rep_api.ListFollowings(20, pageToken)
 		if err != nil {
-			return syncedCount, err
+			return syncedCount, mediaSummary, err
 		}
 		items := resp.GetFollowTargets()
 		hlog.Infof(
@@ -86,10 +94,10 @@ func syncFollowings(now time.Time) (int, error) {
 			strings.TrimSpace(resp.GetNextPageToken()) != "",
 		)
 		if err := saveFollowings(items, now); err != nil {
-			return syncedCount, err
+			return syncedCount, mediaSummary, err
 		}
 		for _, item := range items {
-			downloadProfileURLSet(followTargetOwner(item), followTargetMediaURLs(item), now)
+			mergeMediaSummary(&mediaSummary, downloadProfileURLSet(followTargetOwner(item), followTargetMediaURLs(item), now))
 		}
 		syncedCount += len(items)
 
@@ -100,7 +108,7 @@ func syncFollowings(now time.Time) (int, error) {
 		pageToken = nextToken
 	}
 
-	return syncedCount, nil
+	return syncedCount, mediaSummary, nil
 }
 
 func saveOshis(items []*model.ListMyOshisOshi, now time.Time) error {
@@ -333,7 +341,8 @@ func userPrivateMediaURLs(user *model.UserPrivate) map[string]string {
 	return urls
 }
 
-func downloadProfileURLSet(owner string, urls map[string]string, now time.Time) {
+func downloadProfileURLSet(owner string, urls map[string]string, now time.Time) MediaSyncSummary {
+	mediaSummary := MediaSyncSummary{}
 	owner = firstNonEmpty(owner, "unknown")
 	prefix := filepath.Join(config.GetMediaPath(), "profile")
 	seen := make(map[string]struct{}, len(urls))
@@ -346,10 +355,31 @@ func downloadProfileURLSet(owner string, urls map[string]string, now time.Time) 
 			continue
 		}
 		seen[rawURL] = struct{}{}
-		if _, err := DownloadProfileMedia(rawURL, now, prefix, owner, kind); err != nil {
+		if _, result, err := DownloadProfileMediaWithResult(rawURL, now, prefix, owner, kind); err != nil {
+			mediaSummary.Add(MediaFailed)
 			hlog.Warnf("download profile media failed, owner=%s kind=%s err=%v", owner, kind, err)
+		} else {
+			mediaSummary.Add(result)
 		}
 	}
+	return mediaSummary
+}
+
+func mergeMediaSummary(target *MediaSyncSummary, source MediaSyncSummary) {
+	if target == nil {
+		return
+	}
+	target.Downloaded += source.Downloaded
+	target.Skipped += source.Skipped
+	target.Failed += source.Failed
+}
+
+func logMediaSyncSummary(label string, summary MediaSyncSummary) {
+	if summary.Downloaded == 0 && summary.Failed == 0 {
+		hlog.Infof("%s: downloaded=0 skipped=%d failed=0", label, summary.Skipped)
+		return
+	}
+	hlog.Infof("%s: downloaded=%d skipped=%d failed=%d", label, summary.Downloaded, summary.Skipped, summary.Failed)
 }
 
 func timestampSeconds(ts *model.Timestamp) int64 {

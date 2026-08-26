@@ -75,8 +75,6 @@ func ListPrimeChatRooms() ([]*PrimeChatRoom, error) {
 		return nil, nil
 	}
 
-	DumpRawResponse("ListPrimeChatRooms", respBuf)
-
 	// 解析响应：ListPrimeChatRoomsResponse { prime_chat_rooms = 1: repeated PrimeChatRoom { ... } }
 	var rooms []*PrimeChatRoom
 	b := respBuf

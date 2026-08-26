@@ -6,7 +6,6 @@ import (
 	"replive/config"
 	"replive/dal"
 	"replive/rep_api"
-	"replive/utils"
 	"strings"
 	"time"
 
@@ -18,9 +17,20 @@ const (
 	primeChatFollowingMaxPages = 50
 )
 
+type PrimeChatStartupSummary struct {
+	Rooms           int
+	BackgroundMedia MediaSyncSummary
+}
+
 // syncPrimeChatAtStartup performs the single read-only Prime Chat sync for a
 // backend process. It is deliberately not registered as a periodic worker.
 func syncPrimeChatAtStartup() error {
+	_, err := syncPrimeChatAtStartupWithSummary()
+	return err
+}
+
+func syncPrimeChatAtStartupWithSummary() (PrimeChatStartupSummary, error) {
+	summary := PrimeChatStartupSummary{}
 	now := time.Now()
 	rooms, listErr := rep_api.ListPrimeChatRooms()
 	if listErr != nil {
@@ -33,7 +43,7 @@ func syncPrimeChatAtStartup() error {
 	followedRooms, followingErr := findPrimeChatRoomsForFollowedUsers()
 	if followingErr != nil {
 		if listErr != nil || len(rooms) == 0 {
-			return fmt.Errorf("discover Prime Chat rooms from followed users: %w", followingErr)
+			return summary, fmt.Errorf("discover Prime Chat rooms from followed users: %w", followingErr)
 		}
 		hlog.Warnf("followed-user Prime Chat discovery failed; using listed rooms only: %v", followingErr)
 	} else {
@@ -44,10 +54,16 @@ func syncPrimeChatAtStartup() error {
 		hlog.Infof("Prime Chat startup room sync found no available rooms")
 	}
 
-	if err := processPrimeChatRooms(rooms, now); err != nil {
-		return err
+	summary.Rooms = len(rooms)
+	backgroundSummary, err := processPrimeChatRooms(rooms, now)
+	if err != nil {
+		return summary, err
 	}
-	return syncPrimeChatMessages()
+	summary.BackgroundMedia = backgroundSummary
+	if err := syncPrimeChatMessages(); err != nil {
+		return summary, err
+	}
+	return summary, nil
 }
 
 // findPrimeChatRoomsForFollowedUsers discovers enabled Prime Chat rooms from
@@ -141,9 +157,11 @@ func isUsablePrimeChatRoom(room *rep_api.PrimeChatRoom) bool {
 	return room != nil && strings.TrimSpace(room.ChatRoomId) != "" && strings.TrimSpace(room.TalentUserId) != ""
 }
 
-func processPrimeChatRooms(rooms []*rep_api.PrimeChatRoom, now time.Time) error {
+func processPrimeChatRooms(rooms []*rep_api.PrimeChatRoom, now time.Time) (mediaSummary MediaSyncSummary, err error) {
 	dbRooms := make([]*dal.PrimeChatRoom, 0, len(rooms))
-	downloaded := 0
+	defer func() {
+		logMediaSyncSummary("Prime Chat background media sync", mediaSummary)
+	}()
 
 	for _, room := range rooms {
 		if !isUsablePrimeChatRoom(room) {
@@ -169,57 +187,19 @@ func processPrimeChatRooms(rooms []*rep_api.PrimeChatRoom, now time.Time) error 
 		}
 		owner := firstNonEmpty(room.TalentDisplayName, room.TalentUniqueId, room.TalentUserId, "unknown")
 		prefix := filepath.Join(config.GetMediaPath(), "profile")
-		if _, err := DownloadProfileMedia(url, now, prefix, owner, "prime_chat_background"); err != nil {
+		if _, result, err := DownloadProfileMediaWithResult(url, now, prefix, owner, "prime_chat_background"); err != nil {
+			mediaSummary.Add(MediaFailed)
 			hlog.Warnf("download Prime Chat background for %s: %v", owner, err)
 		} else {
-			downloaded++
+			mediaSummary.Add(result)
 		}
 	}
 
 	if err := dal.SavePrimeChatRooms(dbRooms); err != nil {
-		return fmt.Errorf("save Prime Chat rooms: %w", err)
+		return mediaSummary, fmt.Errorf("save Prime Chat rooms: %w", err)
 	}
-	logSubscribedPrimeChatTimingProbes(dbRooms)
-	hlog.Infof("Prime Chat startup room sync done: rooms=%d backgrounds=%d", len(dbRooms), downloaded)
-	return nil
-}
-
-func logSubscribedPrimeChatTimingProbes(rooms []*dal.PrimeChatRoom) {
-	fandomRooms, err := dal.GetChatRooms()
-	if err != nil {
-		hlog.Warnf("Prime Chat timing probe skipped: load Fandom rooms: %v", err)
-		return
-	}
-
-	subscribedTalentIDs := make(map[string]struct{}, len(fandomRooms))
-	for _, room := range fandomRooms {
-		if room != nil && strings.TrimSpace(room.UserId) != "" {
-			subscribedTalentIDs[room.UserId] = struct{}{}
-		}
-	}
-	for _, room := range rooms {
-		if room == nil {
-			continue
-		}
-		if _, subscribed := subscribedTalentIDs[room.TalentUserId]; !subscribed {
-			continue
-		}
-		hlog.Infof(
-			"Prime Chat timing probe: display_name=%q talent_user_id=%s member_user_id=%s talent_last_check_time=%s member_user_last_check_time=%s (member/current account diagnostic only; only logged because this talent has a Fandom chat room for the current account)",
-			room.TalentDisplayName,
-			room.TalentUserId,
-			room.MemberUserId,
-			formatPrimeChatProbeTime(room.TalentLastCheckTimeMillis),
-			formatPrimeChatProbeTime(room.MemberLastCheckTimeMillis),
-		)
-	}
-}
-
-func formatPrimeChatProbeTime(value int64) string {
-	if value == 0 {
-		return "unset"
-	}
-	return fmt.Sprintf("%s (unix_ms=%d)", time.UnixMilli(value).In(utils.JapanLocation()).Format(time.RFC3339Nano), value)
+	hlog.Infof("Prime Chat startup room sync done: rooms=%d backgrounds_downloaded=%d backgrounds_skipped=%d backgrounds_failed=%d", len(dbRooms), mediaSummary.Downloaded, mediaSummary.Skipped, mediaSummary.Failed)
+	return mediaSummary, nil
 }
 
 // syncPrimeChatMessages walks every page once at startup. The server orders

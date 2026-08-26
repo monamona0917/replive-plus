@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
 	"replive/config"
 	"replive/dal"
@@ -84,7 +85,9 @@ func runMain() (exitCode int) {
 
 	h := server.Default(server.WithHostPorts("127.0.0.1:8888"))
 
-	service.Init()
+	startupSummary := service.Init()
+	service.LogStartupSummary(startupSummary)
+	service.StartBackgroundWorkers()
 
 	registerRoutes(h)
 	go h.Spin()
@@ -96,7 +99,9 @@ func runMain() (exitCode int) {
 		case err := <-authFailureCh:
 			panic(fmt.Errorf("认证已失效：%v。已清空本地 refresh_token，请重新打开程序完成登录", err))
 		case <-ticker.C:
-			hlog.Infof("listening...")
+			if rand.IntN(100) < 2 {
+				hlog.Infof("listening...")
+			}
 		}
 	}
 
