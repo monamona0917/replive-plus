@@ -83,10 +83,12 @@ export const Sidebar = () => {
         )}
       >
         {!sidebarCollapsed && (
-          <div className="flex items-center min-w-0">
-            <span className="font-bold text-base text-sidebar-foreground tracking-tight">
-              Replive+
-            </span>
+          <div className="flex items-center min-w-0 select-none">
+            <img
+              src="/icons/ic_logo.svg"
+              alt="Replive+"
+              className="h-5 w-auto object-contain"
+            />
           </div>
         )}
 
@@ -249,7 +251,7 @@ export const Sidebar = () => {
             <Avatar
               localUrl={userProfile?.avatarLocalUrl}
               remoteUrl={userProfile?.offlineMode ? undefined : userProfile?.avatarUrl}
-              label={userProfile?.displayName || "用户"}
+              label={userProfile?.displayName || "？"}
               className="w-8 h-8 rounded-full bg-muted ring-1 ring-border/50 shrink-0 object-cover"
               fallbackClassName="text-xs text-muted-foreground"
             />
@@ -267,7 +269,7 @@ export const Sidebar = () => {
             <Avatar
               localUrl={userProfile?.avatarLocalUrl}
               remoteUrl={userProfile?.offlineMode ? undefined : userProfile?.avatarUrl}
-              label={userProfile?.displayName || "用户"}
+              label={userProfile?.displayName || "？"}
               className="w-8 h-8 rounded-full bg-muted ring-1 ring-border/50 object-cover"
               fallbackClassName="text-xs text-muted-foreground"
             />
