@@ -46,11 +46,11 @@ if errorlevel 1 (
 popd
 
 echo Building backend...
-go build -mod=vendor -o "%OUTPUT_DIR%\replive-plus.exe" .
+go build -mod=vendor -trimpath -ldflags="-s -w" -o "%OUTPUT_DIR%\replive-plus.exe" .
 if errorlevel 1 goto failed
 
 echo Building frontend executable...
-go build -mod=vendor -o "%OUTPUT_DIR%\replive-plus-web.exe" .\replive-web-pro
+go build -mod=vendor -trimpath -ldflags="-s -w" -o "%OUTPUT_DIR%\replive-plus-web.exe" .\replive-web-pro
 if errorlevel 1 goto failed
 
 echo.
