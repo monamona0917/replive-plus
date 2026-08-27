@@ -621,7 +621,7 @@ func HandleGetChatMedia(ctx context.Context, c *app.RequestContext) {
 
 	// Hertz uses a file stream here and keeps byte-range requests for video previews.
 	c.Response.Header.Set("Cache-Control", "private, max-age=86400")
-	c.File(mediaPath)
+	app.ServeFileUncompressed(c, mediaPath)
 }
 
 // HandleGetProfileMedia serves an archived profile image after validating that
@@ -641,7 +641,7 @@ func HandleGetProfileMedia(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	c.Response.Header.Set("Cache-Control", "private, max-age=86400")
-	c.File(mediaPath)
+	app.ServeFileUncompressed(c, mediaPath)
 }
 
 func parseInt32Query(c *app.RequestContext, key string, def int32) (int32, error) {
