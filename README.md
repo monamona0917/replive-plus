@@ -6,10 +6,10 @@
 
 ### 具体修改内容
 
-- 重构Web 前端，可在浏览器中使用聊天记录。
+- 重构Web 前端，支持发送消息（在config.yaml中选择开启;send_chat: false/true)
 - 支持显示Fandom已读状态。
 - 显示 Fandom 订阅天数及对应阶段样式。显示账号可输入字符上限。
-- 新增 Prime Chat 房间
+- 新增 Prime Chat
 
 ## 构建与运行（Windows）
 
