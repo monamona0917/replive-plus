@@ -15,4 +15,3 @@ message SendChatMessageRequest {
 
 message SendChatMessageResponse {
 }
-
