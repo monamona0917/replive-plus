@@ -16,6 +16,7 @@ export const MediaLightbox = () => {
   const mediaList = useChatStore((s) => s.mediaList);
   const closeLightbox = useChatStore((s) => s.closeLightbox);
   const stepLightbox = useChatStore((s) => s.stepLightbox);
+  const userProfile = useChatStore((s) => s.userProfile);
 
   const [scale, setScale] = useState(1);
   const [rotation, setRotation] = useState(0);
@@ -57,6 +58,7 @@ export const MediaLightbox = () => {
 
   const fallbackToRemote = () => {
     if (
+      userProfile?.offlineMode !== true &&
       lightboxMedia.fallbackUrl &&
       activeMediaSrc !== lightboxMedia.fallbackUrl
     ) {
@@ -66,7 +68,7 @@ export const MediaLightbox = () => {
   const handleDownload = () => {
     const a = document.createElement("a");
     a.href = activeMediaSrc;
-    a.download = `replive_${lightboxMedia.id}_${Date.now()}`;
+    a.download = `Replive+_${lightboxMedia.id}_${Date.now()}`;
     a.target = "_blank";
     a.rel = "noreferrer";
     document.body.appendChild(a);

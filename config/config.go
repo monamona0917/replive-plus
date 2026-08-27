@@ -29,7 +29,7 @@ type Config struct {
 	RefreshToken   string `yaml:"refresh_token"`
 	FfmpegPath     string `yaml:"ffmpeg_path"`
 	MediaPathWin   string `yaml:"media_path_win"`
-	MediaPathLinux string `yaml:"media_path_linux"`
+	MediaPathLinux string `yaml:"media_path_linux,omitempty"`
 	Email          struct {
 		SmtpHost string `yaml:"smtp_host"`
 		Sender   string `yaml:"sender"`

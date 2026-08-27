@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"replive/dal"
 	"replive/utils"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ type PrimeChatRoomDTO struct {
 	TalentUniqueId            string `json:"talent_unique_id"`
 	TalentDisplayName         string `json:"talent_display_name"`
 	TalentAvatarUrl           string `json:"talent_avatar_url"`
+	TalentAvatarLocalURL      string `json:"talent_avatar_local_url,omitempty"`
 	MemberUserId              string `json:"member_user_id"`
 	MemberBackgroundImageUrl  string `json:"member_background_image_url"`
 	TalentLastCheckTimeMillis int64  `json:"talent_last_check_time_ms"`
@@ -163,27 +165,24 @@ func HandleGetPrimeChatDates(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	type dateRow struct {
-		DateKey string `gorm:"column:date_key"`
-	}
-	rows := make([]dateRow, 0)
+	var createTimes []int64
 	err = primeBaseMessageQuery(chatRoomID, "").
 		Where("create_unix_time_ms > 0").
-		Select("strftime('%Y-%m-%d', create_unix_time_ms / 1000, 'unixepoch', '+9 hours') AS date_key").
-		Group("date_key").
-		Order("date_key ASC").
-		Scan(&rows).Error
+		Pluck("create_unix_time_ms", &createTimes).Error
 	if err != nil {
 		c.JSON(consts.StatusOK, BadResp(err.Error()))
 		return
 	}
 
-	dates := make([]string, 0, len(rows))
-	for _, row := range rows {
-		if row.DateKey != "" {
-			dates = append(dates, row.DateKey)
-		}
+	dateSet := make(map[string]struct{}, len(createTimes))
+	for _, createTime := range createTimes {
+		dateSet[time.UnixMilli(createTime).In(utils.LocalLocation()).Format("2006-01-02")] = struct{}{}
 	}
+	dates := make([]string, 0, len(dateSet))
+	for dateKey := range dateSet {
+		dates = append(dates, dateKey)
+	}
+	sort.Strings(dates)
 	c.JSON(consts.StatusOK, &Resp{Data: dates})
 }
 
@@ -284,7 +283,7 @@ func emptyPrimeMessagesResp() *GetPrimeChatMessagesResp {
 }
 
 func findFirstPrimeMessageIDByDate(chatRoomID, bodyType, date string) (int64, error) {
-	start, err := time.ParseInLocation("2006-01-02", date, utils.JapanLocation())
+	start, err := time.ParseInLocation("2006-01-02", date, utils.LocalLocation())
 	if err != nil {
 		return 0, fmt.Errorf("invalid date %q; expected yyyy-MM-dd: %w", date, err)
 	}
@@ -506,6 +505,7 @@ func primeChatRoomDTO(room *dal.PrimeChatRoom) *PrimeChatRoomDTO {
 		TalentUniqueId:            room.TalentUniqueId,
 		TalentDisplayName:         room.TalentDisplayName,
 		TalentAvatarUrl:           room.TalentAvatarUrl,
+		TalentAvatarLocalURL:      localProfileMediaURL(room.TalentAvatarPath),
 		MemberUserId:              room.MemberUserId,
 		MemberBackgroundImageUrl:  room.MemberBackgroundImageUrl,
 		TalentLastCheckTimeMillis: room.TalentLastCheckTimeMillis,

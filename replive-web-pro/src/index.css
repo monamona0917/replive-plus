@@ -173,26 +173,27 @@
   background-clip: padding-box;
 }
 
-/* Message jump highlight animation */
-@keyframes target-pulse {
+/* Message jump highlight animation - Scheme 2: Row border pulse without background tint or layout shift */
+@keyframes row-border-pulse {
   0% {
-    transform: scale(1);
-    box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 60%, transparent);
+    box-shadow: 0 0 0 0 transparent;
   }
-  40% {
-    transform: scale(1.02);
-    box-shadow: 0 0 0 10px color-mix(in oklch, var(--primary) 0%, transparent);
+  25% {
+    box-shadow: 0 0 0 1.5px rgba(56, 138, 241, 0.85), 0 0 8px rgba(56, 138, 241, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 0 1.5px rgba(56, 138, 241, 0.25), 0 0 2px rgba(56, 138, 241, 0.05);
+  }
+  75% {
+    box-shadow: 0 0 0 1.5px rgba(56, 138, 241, 0.85), 0 0 8px rgba(56, 138, 241, 0.25);
   }
   100% {
-    transform: scale(1);
-    box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 0%, transparent);
+    box-shadow: 0 0 0 0 transparent;
   }
 }
 
-.msg-jump-highlight {
-  animation: target-pulse 1.8s ease-out;
-  border-radius: var(--radius);
-  background-color: color-mix(in oklch, var(--primary) 12%, transparent);
+.msg-row-highlight {
+  animation: row-border-pulse 1.6s ease-in-out forwards;
 }
 
 /* Glassmorphism helpers */

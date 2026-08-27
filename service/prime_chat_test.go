@@ -1,10 +1,67 @@
 package service
 
 import (
+	"errors"
+	"fmt"
 	"replive/dal"
 	"replive/rep_api"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
+
+func TestQueryPrimeChatRoomsLimitsConcurrencyAndContinuesAfterErrors(t *testing.T) {
+	candidates := make([]primeChatFollowedUser, 12)
+	for i := range candidates {
+		candidates[i] = primeChatFollowedUser{
+			userID: fmt.Sprintf("user-%d", i),
+			label:  fmt.Sprintf("user-%d", i),
+		}
+	}
+
+	var active int32
+	var maxActive int32
+	var releaseOnce sync.Once
+	release := make(chan struct{})
+	getRoom := func(userID string) (*rep_api.PrimeChatRoom, error) {
+		current := atomic.AddInt32(&active, 1)
+		for {
+			previous := atomic.LoadInt32(&maxActive)
+			if current <= previous || atomic.CompareAndSwapInt32(&maxActive, previous, current) {
+				break
+			}
+		}
+		if current == primeChatRoomQueryConcurrency {
+			releaseOnce.Do(func() { close(release) })
+		}
+		select {
+		case <-release:
+		case <-time.After(time.Second):
+			atomic.AddInt32(&active, -1)
+			return nil, errors.New("query barrier timed out")
+		}
+		atomic.AddInt32(&active, -1)
+		if userID == "user-2" || userID == "user-7" {
+			return nil, errors.New("prime chat unavailable")
+		}
+		return &rep_api.PrimeChatRoom{
+			ChatRoomId:   "prime:" + userID,
+			TalentUserId: userID,
+		}, nil
+	}
+
+	rooms := queryPrimeChatRooms(candidates, getRoom)
+	if len(rooms) != len(candidates)-2 {
+		t.Fatalf("len(rooms) = %d, want %d", len(rooms), len(candidates)-2)
+	}
+	if maxActive > primeChatRoomQueryConcurrency {
+		t.Fatalf("max concurrent queries = %d, want <= %d", maxActive, primeChatRoomQueryConcurrency)
+	}
+	if maxActive != primeChatRoomQueryConcurrency {
+		t.Fatalf("max concurrent queries = %d, want %d", maxActive, primeChatRoomQueryConcurrency)
+	}
+}
 
 func TestBuildPrimeChatMessagesMergesReactionIntoCanonicalMessage(t *testing.T) {
 	rooms := []*dal.PrimeChatRoom{{

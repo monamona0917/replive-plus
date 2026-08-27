@@ -13,10 +13,13 @@ export interface ChatRoom {
   chatRoomId: string;
   displayName: string;
   avatarUrl?: string;
+  avatarLocalUrl?: string;
   memberUserId?: string;
   backgroundImageUrl?: string;
   // Fandom talent's last room-check time, normalized to Unix milliseconds.
   talentLastCheckTime?: number;
+  // Fandom subscription day count
+  dayCount?: number;
   category?: ChatCategory;
   lastMessageTime?: string;
   lastMessageContent?: string;
@@ -51,7 +54,9 @@ export interface UserProfile {
   uniqueId: string;
   displayName: string;
   avatarUrl?: string;
+  avatarLocalUrl?: string;
   sendChatEnabled?: boolean;
+  offlineMode?: boolean;
 }
 
 export interface TranslationState {
@@ -69,7 +74,9 @@ export interface BackendChatRoom {
   chat_room_id: string;
   display_name: string;
   avatar_url?: string;
+  avatar_local_url?: string;
   talent_last_check_time?: number | string;
+  day_count?: number;
   last_message_time?: number;
   last_message_content?: string;
   last_message_type?: number;
@@ -80,7 +87,9 @@ export interface BackendUserProfile {
   unique_id: string;
   display_name: string;
   avatar_url?: string;
+  avatar_local_url?: string;
   send_chat?: boolean;
+  offline_mode?: boolean;
 }
 
 export interface BackendMessage {
@@ -106,6 +115,7 @@ export interface BackendPrimeChatRoom {
   talent_unique_id?: string;
   talent_display_name?: string;
   talent_avatar_url?: string;
+  talent_avatar_local_url?: string;
   member_user_id?: string;
   member_background_image_url?: string;
   last_message_time?: number;

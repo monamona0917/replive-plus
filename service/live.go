@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"fmt"
 	"math/rand/v2"
 	"net/url"
@@ -84,9 +83,7 @@ func StartLiveMonitor() {
 		hlog.Infof("继续观察有没有女声优正在直播(:3_ヽ)_")
 		go func() {
 			<-liveMonitorStartupRelease
-			if err := runLiveRecorderLoop(context.Background(), 0, state, state != nil, false); err != nil {
-				hlog.Errorf("直播监听已停止：%v", err)
-			}
+			runLiveMonitorLoop(state)
 		}()
 	})
 }
@@ -115,29 +112,16 @@ func takePreparedLiveMonitorState() *liveMonitorState {
 	return state
 }
 
-func RunLiveRecorder(ctx context.Context, interval time.Duration) error {
-	return runLiveRecorderLoop(ctx, interval, takePreparedLiveMonitorState(), false, true)
-}
-
 func ReleaseLiveMonitorStartup() {
 	liveMonitorStartupReleaseOnce.Do(func() {
 		close(liveMonitorStartupRelease)
 	})
 }
 
-func runLiveRecorderLoop(ctx context.Context, interval time.Duration, monitorState *liveMonitorState, preparedByStartup bool, announce bool) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	initEmailSender()
-	startFfmpegWatcher()
+func runLiveMonitorLoop(monitorState *liveMonitorState) {
 	if monitorState == nil {
 		monitorState = &liveMonitorState{activeLives: make(map[string]struct{})}
-	}
-	if announce {
-		hlog.Infof("继续观察有没有女声优正在直播(:3_ヽ)_")
-	}
-	if preparedByStartup {
+	} else {
 		queued := make(map[string]struct{}, len(monitorState.pendingLives))
 		for _, live := range monitorState.pendingLives {
 			if live == nil {
@@ -158,32 +142,17 @@ func runLiveRecorderLoop(ctx context.Context, interval time.Duration, monitorSta
 	}
 
 	poll := func() {
+		if !rep_api.IsOnline() {
+			return
+		}
 		if err := checkLiveWithState(monitorState); err != nil {
 			logLiveStatusFailure(err)
 			monitorState.queryFailed = true
 		}
 	}
-	if !preparedByStartup {
-		poll()
-	}
 	for {
-		wait := interval
-		if wait <= 0 {
-			wait = nextLivePollingInterval()
-		}
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			return nil
-		case <-timer.C:
-			poll()
-		}
+		time.Sleep(nextLivePollingInterval())
+		poll()
 	}
 }
 

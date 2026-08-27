@@ -1,10 +1,11 @@
 import { AlertCircle, X } from "lucide-react";
-import useChatStore from "../../stores/chat-store";
+import useChatStore, { roomKey } from "../../stores/chat-store";
 import ChatHeader from "./ChatHeader";
 import ChatInput from "./ChatInput";
 import ChatList from "./ChatList";
 
 export const ChatContainer = () => {
+  const selectedRoom = useChatStore((s) => s.selectedRoom);
   const error = useChatStore((s) => s.error);
   const setError = useChatStore((s) => s.setError);
 
@@ -34,7 +35,7 @@ export const ChatContainer = () => {
       <ChatList />
 
       {/* Footer Input */}
-      <ChatInput />
+      <ChatInput key={selectedRoom ? roomKey(selectedRoom) : "no-room"} />
     </main>
   );
 };

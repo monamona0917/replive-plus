@@ -16,7 +16,13 @@ const MEDIA_RENDER_BATCH_SIZE = 12;
 const MAX_CONCURRENT_IMAGE_LOADS = 4;
 const LOAD_MORE_THRESHOLD = 160;
 
-function VideoThumbnail({ item }: { item: MediaItem }) {
+function VideoThumbnail({
+  item,
+  allowRemoteFallback,
+}: {
+  item: MediaItem;
+  allowRemoteFallback: boolean;
+}) {
   const [source, setSource] = useState(item.url);
 
   useEffect(() => {
@@ -24,7 +30,7 @@ function VideoThumbnail({ item }: { item: MediaItem }) {
   }, [item.url]);
 
   const handleError = () => {
-    if (item.fallbackUrl && source !== item.fallbackUrl) {
+    if (allowRemoteFallback && item.fallbackUrl && source !== item.fallbackUrl) {
       setSource(item.fallbackUrl);
     }
   };
@@ -51,6 +57,8 @@ export const MediaGalleryDrawer = () => {
   const openLightbox = useChatStore((s) => s.openLightbox);
   const jumpToMessage = useChatStore((s) => s.jumpToMessage);
   const selectedRoom = useChatStore((s) => s.selectedRoom);
+  const userProfile = useChatStore((s) => s.userProfile);
+  const allowRemoteFallback = userProfile?.offlineMode !== true;
 
   const [activeTab, setActiveTab] = useState<"all" | "image" | "video">("all");
   const [renderedMediaCount, setRenderedMediaCount] = useState(
@@ -148,7 +156,7 @@ export const MediaGalleryDrawer = () => {
 
   const handleImageError = (item: MediaItem) => {
     const source = imageSources[item.id] || item.url;
-    if (item.fallbackUrl && source !== item.fallbackUrl) {
+    if (allowRemoteFallback && item.fallbackUrl && source !== item.fallbackUrl) {
       setImageSources((current) => ({ ...current, [item.id]: item.fallbackUrl! }));
       return;
     }
@@ -319,7 +327,10 @@ export const MediaGalleryDrawer = () => {
                       </>
                     ) : (
                       <div className="w-full h-full relative bg-black flex items-center justify-center">
-                        <VideoThumbnail item={item} />
+                        <VideoThumbnail
+                          item={item}
+                          allowRemoteFallback={allowRemoteFallback}
+                        />
                         <span className="absolute inset-0 flex items-center justify-center bg-black/30">
                           <Film className="w-5 h-5 text-white/90" />
                         </span>

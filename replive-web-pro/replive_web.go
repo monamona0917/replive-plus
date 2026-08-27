@@ -39,6 +39,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", proxy.ServeHTTP)
 	mux.HandleFunc("/media/", proxy.ServeHTTP)
+	mux.HandleFunc("/profile-media", proxy.ServeHTTP)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		serveFrontend(w, r, distFS)
 	})

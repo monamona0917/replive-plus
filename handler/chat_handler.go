@@ -11,6 +11,7 @@ import (
 	"replive/dal"
 	"replive/rep_api"
 	"replive/utils"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,14 +23,51 @@ import (
 )
 
 func HandleGetChatRooms(ctx context.Context, c *app.RequestContext) {
-	resp := &Resp{}
 	rooms, err := dal.GetChatRooms()
 	if err != nil {
 		c.JSON(consts.StatusOK, BadResp(err.Error()))
 		return
 	}
-	resp.Data = rooms
-	c.JSON(consts.StatusOK, resp)
+	data := make([]*ChatRoomDTO, 0, len(rooms))
+	for _, room := range rooms {
+		if room == nil {
+			continue
+		}
+		data = append(data, chatRoomDTO(room))
+	}
+	c.JSON(consts.StatusOK, &Resp{Data: data})
+}
+
+type ChatRoomDTO struct {
+	Id                  int64  `json:"id"`
+	UserId              string `json:"user_id"`
+	UniqueId            string `json:"unique_id"`
+	DisplayName         string `json:"display_name"`
+	ChatRoomId          string `json:"chat_room_id"`
+	AvatarUrl           string `json:"avatar_url"`
+	AvatarLocalURL      string `json:"avatar_local_url,omitempty"`
+	TalentLastCheckTime int64  `json:"talent_last_check_time"`
+	DayCount            int64  `json:"day_count"`
+	LastMessageTime     int64  `json:"last_message_time"`
+	LastMessageContent  string `json:"last_message_content"`
+	LastMessageType     int32  `json:"last_message_type"`
+}
+
+func chatRoomDTO(room *dal.ChatRoom) *ChatRoomDTO {
+	return &ChatRoomDTO{
+		Id:                  room.Id,
+		UserId:              room.UserId,
+		UniqueId:            room.UniqueId,
+		DisplayName:         room.DisplayName,
+		ChatRoomId:          room.ChatRoomId,
+		AvatarUrl:           room.AvatarUrl,
+		AvatarLocalURL:      localProfileMediaURL(room.AvatarPath),
+		TalentLastCheckTime: room.TalentLastCheckTime,
+		DayCount:            room.DayCount,
+		LastMessageTime:     room.LastMessageTime,
+		LastMessageContent:  room.LastMessageContent,
+		LastMessageType:     room.LastMessageType,
+	}
 }
 
 type ChatMessageDTO struct {
@@ -165,29 +203,33 @@ func HandleGetChatDates(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	type dateRow struct {
-		DateKey string `gorm:"column:date_key"`
-	}
-	rows := make([]dateRow, 0)
+	var sendTimes []int64
 	err = baseMessageQuery(room.UserId, room.ChatRoomId, msgType).
 		Where("send_time > 0").
-		Select("strftime('%Y-%m-%d', send_time, 'unixepoch', '+9 hours') AS date_key").
-		Group("date_key").
-		Order("date_key ASC").
-		Scan(&rows).Error
+		Pluck("send_time", &sendTimes).Error
 	if err != nil {
 		hlog.Errorf("query chat dates failed, uid=%s room=%s err=%v", room.UserId, room.ChatRoomId, err)
 		c.JSON(consts.StatusOK, BadResp(err.Error()))
 		return
 	}
 
-	dates := make([]string, 0, len(rows))
-	for _, row := range rows {
-		if row.DateKey != "" {
-			dates = append(dates, row.DateKey)
-		}
+	dateSet := make(map[string]struct{}, len(sendTimes))
+	for _, sendTime := range sendTimes {
+		dateSet[localDateKeyFromUnixValue(sendTime)] = struct{}{}
 	}
+	dates := make([]string, 0, len(dateSet))
+	for dateKey := range dateSet {
+		dates = append(dates, dateKey)
+	}
+	sort.Strings(dates)
 	c.JSON(consts.StatusOK, &Resp{Data: dates})
+}
+
+func localDateKeyFromUnixValue(value int64) string {
+	if value >= 100_000_000_000 || value <= -100_000_000_000 {
+		return time.UnixMilli(value).In(utils.LocalLocation()).Format("2006-01-02")
+	}
+	return time.Unix(value, 0).In(utils.LocalLocation()).Format("2006-01-02")
 }
 
 func HandleSearchChatMessages(ctx context.Context, c *app.RequestContext) {
@@ -268,7 +310,7 @@ func findChatRoom(displayName string) (dal.ChatRoom, error) {
 }
 
 func findFirstMessageIDByDate(userID string, chatRoomID string, msgType int32, date string) (int64, error) {
-	start, err := time.ParseInLocation("2006-01-02", date, utils.JapanLocation())
+	start, err := time.ParseInLocation("2006-01-02", date, utils.LocalLocation())
 	if err != nil {
 		return 0, fmt.Errorf("date 参数非法，应为 yyyy-MM-dd: %v", err)
 	}
@@ -582,6 +624,26 @@ func HandleGetChatMedia(ctx context.Context, c *app.RequestContext) {
 	c.File(mediaPath)
 }
 
+// HandleGetProfileMedia serves an archived profile image after validating that
+// the requested path remains inside the configured media/profile directory.
+func HandleGetProfileMedia(ctx context.Context, c *app.RequestContext) {
+	storedPath := strings.TrimSpace(string(c.Query("path")))
+	mediaPath := resolveProfileMediaPath(storedPath)
+	if !isProfileMediaPath(mediaPath) {
+		c.SetStatusCode(consts.StatusNotFound)
+		_, _ = c.Write([]byte("profile media not found"))
+		return
+	}
+	info, err := os.Stat(mediaPath)
+	if err != nil || !info.Mode().IsRegular() {
+		c.SetStatusCode(consts.StatusNotFound)
+		_, _ = c.Write([]byte("profile media not found"))
+		return
+	}
+	c.Response.Header.Set("Cache-Control", "private, max-age=86400")
+	c.File(mediaPath)
+}
+
 func parseInt32Query(c *app.RequestContext, key string, def int32) (int32, error) {
 	v := strings.TrimSpace(string(c.Query(key)))
 	if v == "" {
@@ -606,20 +668,6 @@ func parseInt64Query(c *app.RequestContext, key string, def int64) (int64, error
 	return n, nil
 }
 
-func buildMediaURL(c *app.RequestContext, msgID, ext string) string {
-	if ext != "" && !strings.HasPrefix(ext, ".") {
-		ext = "." + ext
-	}
-	scheme := "http"
-	if v := c.Request.Header.Peek("X-Forwarded-Proto"); len(v) > 0 {
-		scheme = string(v)
-	} else if s := c.URI().Scheme(); len(s) > 0 {
-		scheme = string(s)
-	}
-	host := string(c.Host())
-	return fmt.Sprintf("%s://%s/media/%s%s", scheme, host, msgID, ext)
-}
-
 func localMediaURL(messageID, localPath, remoteURL, defaultExt string) string {
 	if strings.TrimSpace(messageID) == "" || strings.TrimSpace(localPath) == "" {
 		return ""
@@ -634,6 +682,41 @@ func localMediaURL(messageID, localPath, remoteURL, defaultExt string) string {
 		ext = defaultExt
 	}
 	return "/media/" + url.PathEscape(messageID) + ext
+}
+
+func localProfileMediaURL(storedPath string) string {
+	if !isProfileMediaPath(resolveProfileMediaPath(storedPath)) {
+		return ""
+	}
+	return "/profile-media?path=" + url.QueryEscape(filepath.ToSlash(storedPath))
+}
+
+func resolveProfileMediaPath(storedPath string) string {
+	storedPath = strings.TrimSpace(storedPath)
+	if storedPath == "" {
+		return ""
+	}
+	if filepath.IsAbs(storedPath) {
+		return filepath.Clean(storedPath)
+	}
+	return filepath.Join(config.GetMediaPath(), filepath.FromSlash(storedPath))
+}
+
+func isProfileMediaPath(mediaPath string) bool {
+	if !isLocalMediaPath(mediaPath) {
+		return false
+	}
+	profileRoot := filepath.Join(config.GetMediaPath(), "profile")
+	root, err := filepath.Abs(profileRoot)
+	if err != nil {
+		return false
+	}
+	path, err := filepath.Abs(mediaPath)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel)
 }
 
 func isLocalMediaPath(mediaPath string) bool {
@@ -716,6 +799,10 @@ type SendMessageResponse struct {
 
 // HandleSendChatMessage 发送聊天消息
 func HandleSendChatMessage(ctx context.Context, c *app.RequestContext) {
+	if !rep_api.IsOnline() {
+		c.JSON(consts.StatusOK, BadResp("当前为离线模式，仅支持浏览本地聊天记录"))
+		return
+	}
 	if !config.Conf.SendChatEnabled {
 		c.JSON(consts.StatusOK, BadResp("发送消息功能已关闭，请在 config.yaml 中设置 send_chat: true 开启"))
 		return
@@ -739,11 +826,11 @@ func HandleSendChatMessage(ctx context.Context, c *app.RequestContext) {
 		c.JSON(consts.StatusOK, BadResp("查找聊天室失败: "+err.Error()))
 		return
 	}
-	hlog.Infof("HandleSendChatMessage: talent_user_id=%s chat_room_id=%s", room.UserId, req.ChatRoomId)
 	if room == nil || room.UserId == "" {
 		c.JSON(consts.StatusOK, BadResp("聊天室不存在或 user_id 为空"))
 		return
 	}
+	hlog.Infof("HandleSendChatMessage: talent_user_id=%s chat_room_id=%s", room.UserId, req.ChatRoomId)
 
 	chatMessageID, err := rep_api.SendChatMessageWithID(room.UserId, req.ChatRoomId, req.Content)
 	if err != nil {

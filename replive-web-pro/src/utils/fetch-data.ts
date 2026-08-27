@@ -1,4 +1,4 @@
-﻿import Axios from "axios";
+import Axios from "axios";
 import type {
   BackendChatRoom,
   BackendMessage,
@@ -37,6 +37,7 @@ interface FetchChatMessagesParams {
   direction?: "older" | "newer" | "around";
   pageSize?: number;
   mediaType?: "image" | "video";
+  signal?: AbortSignal;
 }
 
 interface SearchChatMessagesParams {
@@ -44,6 +45,20 @@ interface SearchChatMessagesParams {
   keyword: string;
   cursorId?: number;
   pageSize?: number;
+}
+
+export interface MediaPage {
+  items: MediaItem[];
+  olderCursorId: number;
+  hasOlder: boolean;
+}
+
+interface FetchRoomMediaPageParams {
+  room: ChatRoom;
+  mediaType: "image" | "video";
+  cursorId?: number;
+  pageSize?: number;
+  signal?: AbortSignal;
 }
 
 const PAGE_SIZE_FALLBACK = 30;
@@ -96,7 +111,12 @@ function mapFandomRoom(room: BackendChatRoom): ChatRoom {
     chatRoomId: room.chat_room_id,
     displayName: room.display_name,
     avatarUrl: room.avatar_url || undefined,
+    avatarLocalUrl: room.avatar_local_url || undefined,
     talentLastCheckTime: normalizeEpochMilliseconds(room.talent_last_check_time),
+    dayCount:
+      typeof room.day_count === "number" && room.day_count > 0
+        ? room.day_count
+        : undefined,
     lastMessageTime: room.last_message_time
       ? new Date(room.last_message_time * 1000).toISOString()
       : undefined,
@@ -116,6 +136,7 @@ function mapPrimeRoom(room: BackendPrimeChatRoom): ChatRoom {
     chatRoomId: room.chat_room_id,
     displayName: room.talent_display_name || room.talent_unique_id || room.talent_user_id,
     avatarUrl: room.talent_avatar_url || undefined,
+    avatarLocalUrl: room.talent_avatar_local_url || undefined,
     memberUserId: room.member_user_id || undefined,
     backgroundImageUrl: room.member_background_image_url || undefined,
     lastMessageTime: room.last_message_time
@@ -274,10 +295,12 @@ export async function fetchChatMessages({
   direction,
   pageSize = PAGE_SIZE_FALLBACK,
   mediaType,
+  signal,
 }: FetchChatMessagesParams): Promise<ChatMessagesPage> {
   const response = await axios.get<ApiResponse<BackendMessagesPage<BackendMessage | BackendPrimeMessage>>>(
     endpointFor(room, "messages"),
     {
+      signal,
       params: freshRequestParams({
         ...roomParams(room),
         page_size: pageSize,
@@ -350,19 +373,31 @@ export async function fetchUserProfile(): Promise<UserProfile> {
     uniqueId: data.unique_id,
     displayName: data.display_name,
     avatarUrl: data.avatar_url,
+    avatarLocalUrl: data.avatar_local_url,
     sendChatEnabled: data.send_chat,
+    offlineMode: data.offline_mode,
   };
 }
 
-export async function fetchRoomAllMedia(room: ChatRoom): Promise<MediaItem[]> {
-  const [images, videos] = await Promise.all([
-    fetchChatMessages({ room, pageSize: 1000, mediaType: "image" }),
-    fetchChatMessages({ room, pageSize: 1000, mediaType: "video" }),
-  ]);
-  const mediaItems: MediaItem[] = [];
-  for (const message of [...images.messages, ...videos.messages]) {
+export async function fetchRoomMediaPage({
+  room,
+  mediaType,
+  cursorId = 0,
+  pageSize = PAGE_SIZE_FALLBACK,
+  signal,
+}: FetchRoomMediaPageParams): Promise<MediaPage> {
+  const page = await fetchChatMessages({
+    room,
+    cursorId,
+    direction: "older",
+    pageSize,
+    mediaType,
+    signal,
+  });
+  const items: MediaItem[] = [];
+  for (const message of page.messages) {
     if (!message.mediaUrl) continue;
-    mediaItems.push({
+    items.push({
       id: `media-${message.id}`,
       type: message.type === "video" ? "video" : "image",
       url: message.mediaUrl,
@@ -373,9 +408,11 @@ export async function fetchRoomAllMedia(room: ChatRoom): Promise<MediaItem[]> {
       backendId: message.backendId,
     });
   }
-  return mediaItems.sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  );
+  return {
+    items,
+    olderCursorId: page.prevCursorId,
+    hasOlder: page.hasOlder,
+  };
 }
 
 export async function fetchRoomAvailableDates(room: ChatRoom): Promise<string[]> {

@@ -10,13 +10,16 @@ import (
 )
 
 const (
+	chatRoomDayCountField            = protowire.Number(6)
 	chatRoomTalentLastCheckTimeField = protowire.Number(101)
 )
 
-// ChatRoomTiming is the Fandom room timing state returned by ListChatRooms.
+// ChatRoomTiming is the Fandom room timing and subscription state returned by ListChatRooms.
 // The generated ChatRoom model predates these fields, so protobuf retains them
-// as unknown fields. The Android 4.7.7 client confirms tag 101.
+// as unknown fields. The Android 4.7.7 client confirms tag 6 (day_count) and tag 101.
 type ChatRoomTiming struct {
+	DayCount               int64
+	HasDayCount            bool
 	TalentLastCheckTime    time.Time
 	HasTalentLastCheckTime bool
 }
@@ -38,6 +41,15 @@ func ParseChatRoomTiming(room *model.ChatRoom) (ChatRoomTiming, error) {
 		unknown = unknown[n:]
 
 		switch {
+		case field == chatRoomDayCountField && wireType == protowire.VarintType:
+			value, n := protowire.ConsumeVarint(unknown)
+			if n < 0 {
+				return timing, fmt.Errorf("decode day_count: %v", protowire.ParseError(n))
+			}
+			timing.DayCount = int64(value)
+			timing.HasDayCount = true
+			unknown = unknown[n:]
+
 		case field == chatRoomTalentLastCheckTimeField && wireType == protowire.BytesType:
 			value, n := protowire.ConsumeBytes(unknown)
 			if n < 0 {

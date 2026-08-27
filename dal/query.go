@@ -1,5 +1,7 @@
 package dal
 
+import "gorm.io/gorm"
+
 func GetChatRooms() ([]*ChatRoom, error) {
 	innerChatRooms := make([]*ChatRoom, 0)
 	err := db.Table(ChatRoom{}.TableName()).
@@ -46,4 +48,28 @@ func GetChatRoomByChatRoomId(chatRoomId string) (*ChatRoom, error) {
 		return nil, nil
 	}
 	return &room, nil
+}
+
+func GetUserPrivate() (*UserPrivate, error) {
+	var user UserPrivate
+	err := ReadDB().Table(UserPrivate{}.TableName()).Order("id desc").Limit(1).Find(&user).Error
+	if err != nil {
+		return nil, err
+	}
+	if user.Id == 0 {
+		return nil, nil
+	}
+	return &user, nil
+}
+
+func UpdateChatRoomAvatarPath(chatRoomID, path string) error {
+	return WithWriteDB(func(db *gorm.DB) error {
+		return db.Model(&ChatRoom{}).Where("chat_room_id = ?", chatRoomID).Update("avatar_path", path).Error
+	})
+}
+
+func UpdateUserPrivateProfileImagePath(userID, path string) error {
+	return WithWriteDB(func(db *gorm.DB) error {
+		return db.Model(&UserPrivate{}).Where("user_id = ?", userID).Update("profile_image_path", path).Error
+	})
 }

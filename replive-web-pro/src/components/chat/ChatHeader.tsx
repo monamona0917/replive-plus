@@ -1,15 +1,18 @@
 import {
-  ArrowDownToLine,
   CalendarDays,
   Images,
   Menu,
+  RotateCw,
   Search,
 } from "lucide-react";
 import useChatStore from "../../stores/chat-store";
 import useSettingsStore from "../../stores/settings-store";
+import DayCountChip from "./DayCountChip";
+import Avatar from "./Avatar";
 
 export const ChatHeader = () => {
   const selectedRoom = useChatStore((s) => s.selectedRoom);
+  const userProfile = useChatStore((s) => s.userProfile);
   const mediaList = useChatStore((s) => s.mediaList);
   const setSearchDrawerOpen = useChatStore((s) => s.setSearchDrawerOpen);
   const setMediaGalleryDrawerOpen = useChatStore(
@@ -36,23 +39,25 @@ export const ChatHeader = () => {
         {selectedRoom ? (
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="relative shrink-0">
-              <img
-                src={
-                  selectedRoom.avatarUrl ||
-                  `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(selectedRoom.displayName)}`
-                }
-                alt={selectedRoom.displayName}
+              <Avatar
+                localUrl={selectedRoom.avatarLocalUrl}
+                remoteUrl={userProfile?.offlineMode ? undefined : selectedRoom.avatarUrl}
+                label={selectedRoom.displayName}
                 className="w-9 h-9 rounded-full object-cover ring-1 ring-border/60 bg-muted"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).src =
-                    "https://api.dicebear.com/7.x/shapes/svg?seed=room_fallback";
-                }}
+                fallbackClassName="text-xs text-muted-foreground"
               />
             </div>
             <div className="flex flex-col min-w-0">
-              <h1 className="text-sm font-bold text-foreground truncate max-w-[180px] sm:max-w-[280px] md:max-w-[360px]">
-                {selectedRoom.displayName}
-              </h1>
+              <div className="flex items-center gap-2 min-w-0">
+                <h1 className="text-sm font-bold text-foreground truncate max-w-[180px] sm:max-w-[280px] md:max-w-[360px]">
+                  {selectedRoom.displayName}
+                </h1>
+                {selectedRoom.category !== "prime" &&
+                  typeof selectedRoom.dayCount === "number" &&
+                  selectedRoom.dayCount > 0 && (
+                    <DayCountChip dayCount={selectedRoom.dayCount} />
+                  )}
+              </div>
               {selectedRoom.uniqueId && (
                 <span className="text-[11px] text-muted-foreground font-mono truncate">
                   @{selectedRoom.uniqueId}
@@ -113,7 +118,7 @@ export const ChatHeader = () => {
           className="inline-flex items-center justify-center p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/80 disabled:opacity-40 transition-colors"
           title="拉取最新并滑到底部"
         >
-          <ArrowDownToLine className="w-4 h-4" />
+          <RotateCw className="w-4 h-4" />
         </button>
       </div>
     </header>

@@ -50,7 +50,7 @@ func GetChatMessages(ctx context.Context, uid, roomId string, cursorMsgId *strin
 		return nil, "", fmt.Errorf("failed to unmarshal ListChatMessagesResponse: %v", err)
 	}
 	for _, msg := range msgResp.Messages {
-		timeVal := time.Unix(msg.Timestamp.Seconds+3600, msg.Timestamp.Nanos) // 转换回日本时间
+		timeVal := time.Unix(msg.Timestamp.Seconds, msg.Timestamp.Nanos).In(time.Local)
 		msg.TimeStr = timeVal.Format("2006-01-02 15:04:05.000")
 	}
 	return msgResp.Messages, msgResp.NextPageCursorMessageId, nil

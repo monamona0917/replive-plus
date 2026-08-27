@@ -2,20 +2,8 @@ package utils
 
 import "time"
 
-const JapanTimeZone = "Asia/Tokyo"
-
-var japanLocation = func() *time.Location {
-	loc, err := time.LoadLocation(JapanTimeZone)
-	if err != nil {
-		return time.FixedZone("JST", 9*60*60)
-	}
-	return loc
-}()
-
-func JapanLocation() *time.Location {
-	return japanLocation
-}
-
-func UseJapanLocalTime() {
-	time.Local = JapanLocation()
+// LocalLocation 返回运行电脑当前配置的系统时区。
+// Go 会从操作系统初始化 time.Local。
+func LocalLocation() *time.Location {
+	return time.Local
 }

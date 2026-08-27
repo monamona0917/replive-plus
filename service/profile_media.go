@@ -1,6 +1,7 @@
 package service
 
 import (
+	"os"
 	"path/filepath"
 	"replive/config"
 	"replive/dal"
@@ -25,6 +26,33 @@ func syncChatRoomProfileMedia(room *model.ChatRoom, now time.Time) MediaSyncSumm
 		"chat_room_avatar": profile.GetAvatarUrl(),
 	}
 	return downloadProfileURLSet(owner, urls, now)
+}
+
+// syncCurrentUserProfile stores the current user's display information and
+// archives the avatar so the local web UI can keep working without Replive.
+func syncCurrentUserProfile() error {
+	user, err := rep_api.GetUserPrivate()
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	if err := saveUserPrivate(user, now); err != nil {
+		return err
+	}
+	if user == nil || strings.TrimSpace(user.GetProfileImageUrl()) == "" {
+		return nil
+	}
+	path, _, downloadErr := downloadProfileMediaPath(
+		userPrivateOwner(user),
+		user.GetProfileImageUrl(),
+		now,
+		"user_private_profile",
+	)
+	if downloadErr != nil {
+		hlog.Warnf("download current user avatar failed: %v", downloadErr)
+		return nil
+	}
+	return dal.UpdateUserPrivateProfileImagePath(user.GetUserId(), path)
 }
 
 func syncOshiProfiles() error {
@@ -184,6 +212,9 @@ func saveUserPrivate(user *model.UserPrivate, now time.Time) error {
 		}
 		if existing.Id > 0 {
 			dbUser.Id = existing.Id
+			if dbUser.ProfileImagePath == "" {
+				dbUser.ProfileImagePath = existing.ProfileImagePath
+			}
 			return db.Save(dbUser).Error
 		}
 		return db.Create(dbUser).Error
@@ -267,6 +298,145 @@ func buildDBUserPrivate(user *model.UserPrivate, now time.Time) *dal.UserPrivate
 		ProfileBackgroundImageUrl: user.GetProfileBackgroundImageUrl(),
 		SyncedAt:                  now.Unix(),
 	}
+}
+
+func downloadProfileMediaPath(owner, rawURL string, now time.Time, kind string) (string, MediaResult, error) {
+	path, result, err := DownloadProfileMediaWithResult(
+		rawURL,
+		now,
+		filepath.Join(config.GetMediaPath(), "profile"),
+		owner,
+		kind,
+	)
+	if err != nil {
+		return "", MediaFailed, err
+	}
+	storedPath, err := toStoredProfileMediaPath(path)
+	if err != nil {
+		return "", MediaFailed, err
+	}
+	return storedPath, result, nil
+}
+
+func toStoredProfileMediaPath(path string) (string, error) {
+	root, err := filepath.Abs(config.GetMediaPath())
+	if err != nil {
+		return "", err
+	}
+	fullPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(root, fullPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", os.ErrInvalid
+	}
+	return filepath.ToSlash(rel), nil
+}
+
+func resolveStoredProfileMediaPath(storedPath string) string {
+	storedPath = strings.TrimSpace(storedPath)
+	if storedPath == "" {
+		return ""
+	}
+	if filepath.IsAbs(storedPath) {
+		return filepath.Clean(storedPath)
+	}
+	return filepath.Join(config.GetMediaPath(), filepath.FromSlash(storedPath))
+}
+
+func findArchivedProfileMediaPath(owner, rawURL string, now time.Time) string {
+	if strings.TrimSpace(owner) == "" || strings.TrimSpace(rawURL) == "" {
+		return ""
+	}
+	filename, err := getProfileMediaFileName(rawURL)
+	if err != nil {
+		return ""
+	}
+	ownerDir := filepath.Join(config.GetMediaPath(), "profile", sanitizeFileName(owner))
+	year, month := getProfileMediaYearMonth(rawURL, now)
+	candidate := filepath.Join(ownerDir, year, month, filename)
+	if mediaFileExists(candidate) {
+		stored, err := toStoredProfileMediaPath(candidate)
+		if err == nil {
+			return stored
+		}
+	}
+	var found string
+	_ = filepath.WalkDir(ownerDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil || entry == nil {
+			return nil
+		}
+		if !entry.IsDir() && strings.EqualFold(entry.Name(), filename) {
+			found = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if found == "" {
+		return ""
+	}
+	stored, err := toStoredProfileMediaPath(found)
+	if err != nil {
+		return ""
+	}
+	return stored
+}
+
+// BackfillProfileMediaPaths connects profile files downloaded by older builds
+// with the corresponding local database rows. It never downloads anything.
+func BackfillProfileMediaPaths() error {
+	rooms, err := dal.GetChatRooms()
+	if err != nil {
+		return err
+	}
+	for _, room := range rooms {
+		if room == nil || strings.TrimSpace(room.AvatarUrl) == "" {
+			continue
+		}
+		if mediaFileExists(resolveStoredProfileMediaPath(room.AvatarPath)) {
+			continue
+		}
+		path := findArchivedProfileMediaPath(room.DisplayName, room.AvatarUrl, time.Now())
+		if path != "" {
+			if err := dal.UpdateChatRoomAvatarPath(room.ChatRoomId, path); err != nil {
+				return err
+			}
+		}
+	}
+
+	primeRooms, err := dal.GetPrimeChatRooms()
+	if err != nil {
+		return err
+	}
+	for _, room := range primeRooms {
+		if room == nil || strings.TrimSpace(room.TalentAvatarUrl) == "" {
+			continue
+		}
+		if mediaFileExists(resolveStoredProfileMediaPath(room.TalentAvatarPath)) {
+			continue
+		}
+		path := findArchivedProfileMediaPath(room.TalentDisplayName, room.TalentAvatarUrl, time.Now())
+		if path != "" {
+			if err := dal.UpdatePrimeChatRoomTalentAvatarPath(room.ChatRoomId, path); err != nil {
+				return err
+			}
+		}
+	}
+
+	user, err := dal.GetUserPrivate()
+	if err != nil {
+		return err
+	}
+	if user != nil && strings.TrimSpace(user.ProfileImageUrl) != "" && !mediaFileExists(resolveStoredProfileMediaPath(user.ProfileImagePath)) {
+		path := findArchivedProfileMediaPath(user.DisplayName, user.ProfileImageUrl, time.Now())
+		if path != "" {
+			if err := dal.UpdateUserPrivateProfileImagePath(user.UserId, path); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func oshiOwner(item *model.ListMyOshisOshi) string {

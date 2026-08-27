@@ -25,3 +25,10 @@ main
 replive-web-pro/node_modules/
 replive-web-pro/dist/
 dist/
+.gocache/
+# Local AI files and generated dependencies
+plan/
+agents.md
+AGENTS.md
+.codex-go-cache-review/
+vendor/

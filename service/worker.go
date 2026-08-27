@@ -2,6 +2,7 @@ package service
 
 import (
 	"math/rand/v2"
+	"replive/rep_api"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/common/hlog"
@@ -14,6 +15,9 @@ type syncWorker struct {
 }
 
 func (w *syncWorker) run() error {
+	if !rep_api.IsOnline() {
+		return nil
+	}
 	defer func() {
 		if err := recover(); err != nil {
 			hlog.Errorf("sync %v panic, err: %v", w.Name, err)
@@ -56,20 +60,23 @@ type StartupSummary struct {
 	Prime PrimeChatStartupSummary
 }
 
-func Init() StartupSummary {
+func Init() (StartupSummary, error) {
 	summary := StartupSummary{}
 	initEmailSender()
+	if err := syncCurrentUserProfile(); err != nil {
+		hlog.Warnf("sync current user profile failed, err: %v", err)
+	}
 	chatRoomsSummary, err := saveChatRoomsWithSummary()
 	if err != nil {
 		hlog.Errorf("saveChatRooms failed, err: %v", err)
-		panic(err)
+		return summary, err
 	}
 	summary.Chat.merge(chatRoomsSummary)
 	hlog.Infof("saveChatRooms done, then refresh new")
 	newMessagesSummary, err := refreshNewMessagesWithSummaryOptions(false)
 	if err != nil {
 		hlog.Errorf("refreshNewMessages failed, err: %v", err)
-		panic(err)
+		return summary, err
 	}
 	summary.Chat.merge(newMessagesSummary)
 	if err := syncOshiProfiles(); err != nil {
@@ -85,7 +92,7 @@ func Init() StartupSummary {
 		hlog.Errorf("initial live check failed, err: %v", err)
 	}
 	summary.Live = liveSummary
-	return summary
+	return summary, nil
 }
 
 func LogStartupSummary(summary StartupSummary) {
@@ -101,9 +108,6 @@ func LogStartupSummary(summary StartupSummary) {
 	}
 
 	logChatSyncMessages(summary.Chat)
-	if summary.Chat.NewMessages > 0 {
-		hlog.Infof("收到 %d 条新消息，其中 %d 张图片", summary.Chat.NewMessages, summary.Chat.NewImageMessages)
-	}
 	hlog.Infof("================================")
 }
 

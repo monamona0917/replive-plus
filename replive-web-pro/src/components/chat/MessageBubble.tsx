@@ -3,6 +3,7 @@ import { memo, useEffect, useState } from "react";
 import { cn, formatTimeStr } from "../../lib/utils";
 import useChatStore from "../../stores/chat-store";
 import type { ChatRoom, Message, UserProfile } from "../../types/chat";
+import Avatar from "./Avatar";
 
 interface MessageBubbleProps {
   message: Message;
@@ -32,7 +33,7 @@ export const MessageBubble = memo(
     const openLightbox = useChatStore((s) => s.openLightbox);
     const { mediaSrc, fallbackToRemote } = useFallbackMediaSource(
       message.mediaUrl,
-      message.mediaFallbackUrl,
+      userProfile?.offlineMode ? undefined : message.mediaFallbackUrl,
     );
 
     // Fandom 的本地 user_id 是房间归属，发送者需由昵称判断；Prime 有结构化发送者字段。
@@ -77,11 +78,12 @@ export const MessageBubble = memo(
       });
     };
 
-    const avatarUrl = isMine
-      ? userProfile?.avatarUrl ||
-        "https://api.dicebear.com/7.x/bottts/svg?seed=user_me"
-      : room.avatarUrl ||
-        `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(message.senderName || room.displayName)}`;
+    const avatarLocalUrl = isMine ? userProfile?.avatarLocalUrl : room.avatarLocalUrl;
+    const avatarRemoteUrl = userProfile?.offlineMode
+      ? undefined
+      : isMine
+        ? userProfile?.avatarUrl
+        : room.avatarUrl;
 
     return (
       <div
@@ -90,21 +92,19 @@ export const MessageBubble = memo(
         className={cn(
           "group flex items-start gap-3 py-1.5 px-2 transition-all duration-300 rounded-xl",
           isMine ? "flex-row-reverse" : "flex-row",
-          isHighlighted && "ring-2 ring-primary ring-offset-2 ring-offset-background bg-primary/5 rounded-2xl animate-pulse",
+          isHighlighted && "msg-row-highlight",
         )}
       >
         {/* Avatar */}
         <div className="relative shrink-0 select-none">
-          <img
-            src={avatarUrl}
-            alt={isMine ? "我" : message.senderName || room.displayName}
+          <Avatar
+            localUrl={avatarLocalUrl}
+            remoteUrl={avatarRemoteUrl}
+            label={isMine ? userProfile?.displayName || "我" : message.senderName || room.displayName}
             loading="lazy"
             decoding="async"
             className="w-9 h-9 rounded-full object-cover bg-muted ring-1 ring-border/50 shadow-xs"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).src =
-                "https://api.dicebear.com/7.x/shapes/svg?seed=avatar_fallback";
-            }}
+            fallbackClassName="text-xs text-muted-foreground"
           />
         </div>
 
@@ -143,8 +143,8 @@ export const MessageBubble = memo(
             className={cn(
               "relative rounded-2xl shadow-xs transition-shadow overflow-hidden",
               isMine
-                ? "bg-primary text-primary-foreground rounded-tr-xs"
-                : "bg-card text-card-foreground border border-border/50 rounded-tl-xs",
+                ? "bg-primary text-primary-foreground"
+                : "bg-card text-card-foreground border border-border/50",
             )}
           >
             {/* Coin Amount (Prime Chat) */}
@@ -172,7 +172,7 @@ export const MessageBubble = memo(
             {/* Image / Video Media */}
             {(message.type === "image" || message.type === "video") &&
               mediaSrc && (
-                <div className="relative group/media overflow-hidden rounded-xl">
+                <div className="relative group/media overflow-hidden">
                   {message.type === "image" ? (
                     <div
                       role="button"

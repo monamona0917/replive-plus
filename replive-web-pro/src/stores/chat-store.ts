@@ -12,16 +12,50 @@ import type {
 import {
   fetchChatMessages,
   fetchChatRooms,
-  fetchRoomAllMedia,
   fetchRoomAvailableDates,
+  fetchRoomMediaPage,
   fetchUserProfile,
   searchChatMessages,
   sendChatMessage,
 } from "../utils/fetch-data";
+import type { MediaPage } from "../utils/fetch-data";
 
 const PAGE_SIZE = 30;
 const JUMP_FILL_PAGE_SIZE = 100;
+const INITIAL_MEDIA_PAGE_SIZE = 1000;
+const BACKGROUND_MEDIA_PAGE_SIZE = 300;
+const MEDIA_PAGE_YIELD_MS = 50;
 let jumpRequestIdCounter = 0;
+
+type MediaType = "image" | "video";
+
+interface RoomMediaLoadState {
+  imageCursor: number;
+  imageHasOlder: boolean;
+  imageLoaded: boolean;
+  videoCursor: number;
+  videoHasOlder: boolean;
+  videoLoaded: boolean;
+  initialLoaded: boolean;
+  isLoading: boolean;
+  isComplete: boolean;
+}
+
+const mediaAbortControllers = new Map<string, AbortController>();
+
+function emptyRoomMediaLoadState(): RoomMediaLoadState {
+  return {
+    imageCursor: 0,
+    imageHasOlder: false,
+    imageLoaded: false,
+    videoCursor: 0,
+    videoHasOlder: false,
+    videoLoaded: false,
+    initialLoaded: false,
+    isLoading: false,
+    isComplete: false,
+  };
+}
 
 export interface ChatState {
   // 专区与房间
@@ -35,9 +69,9 @@ export interface ChatState {
   newerCursorByRoom: Record<string, number>;
   hasMoreByRoom: Record<string, boolean>;
   hasNewerByRoom: Record<string, boolean>;
-  messageGroups: MessageGroup[];
   mediaList: MediaItem[];
   mediaListByRoom: Record<string, MediaItem[]>;
+  mediaLoadStateByRoom: Record<string, RoomMediaLoadState>;
   isLoadingMedia: boolean;
 
   // 可用日期列表（用于日历高亮）
@@ -149,6 +183,20 @@ function extractMediaItems(messages: Message[]): MediaItem[] {
   return items;
 }
 
+function mergeMediaItems(...groups: MediaItem[][]): MediaItem[] {
+  const byID = new Map<string, MediaItem>();
+  for (const group of groups) {
+    for (const item of group) {
+      byID.set(item.id, item);
+    }
+  }
+  return Array.from(byID.values()).sort((a, b) => {
+    const timeDiff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    if (timeDiff !== 0) return timeDiff;
+    return b.backendId - a.backendId;
+  });
+}
+
 function extractDatesFromMessages(messages: Message[]): string[] {
   const dates = new Set<string>();
   for (const msg of messages) {
@@ -198,9 +246,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   newerCursorByRoom: {},
   hasMoreByRoom: {},
   hasNewerByRoom: {},
-  messageGroups: [],
   mediaList: [],
   mediaListByRoom: {},
+  mediaLoadStateByRoom: {},
   isLoadingMedia: false,
 
   availableDatesByRoom: {},
@@ -289,6 +337,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
   selectRoom: async (room: ChatRoom) => {
     const key = roomKey(room);
     const roomCat = room.category || "fandom";
+    const previousRoom = get().selectedRoom;
+    const previousKey = previousRoom ? roomKey(previousRoom) : "";
+
+    if (previousKey && previousKey !== key) {
+      mediaAbortControllers.get(previousKey)?.abort();
+      mediaAbortControllers.delete(previousKey);
+      set((state) => {
+        const previousMediaState = state.mediaLoadStateByRoom[previousKey];
+        if (!previousMediaState?.isLoading) return state;
+        return {
+          mediaLoadStateByRoom: {
+            ...state.mediaLoadStateByRoom,
+            [previousKey]: {
+              ...previousMediaState,
+              isLoading: false,
+            },
+          },
+        };
+      });
+    }
 
     // 递增该房间代次并重置在途跳转状态
     jumpRequestIdCounter++;
@@ -297,15 +365,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     set((state) => {
       const messages = state.messagesByRoom[key] ?? [];
-      const currentMedia =
-        state.mediaListByRoom[key] ?? extractMediaItems(messages);
+      const currentMedia = mergeMediaItems(
+        state.mediaListByRoom[key] ?? [],
+        extractMediaItems(messages),
+      );
       return {
         selectedRoom: room,
         activeCategory: roomCat,
         searchQuery: "",
         searchResults: [],
-        messageGroups: groupMessagesByDate(messages),
         mediaList: currentMedia,
+        isLoadingMedia: state.mediaLoadStateByRoom[key]?.isLoading ?? false,
         error: null,
         jumpTarget: null,
         isLoadingMessagesByRoom: {
@@ -331,7 +401,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }));
     }
 
-    // 后台预加载该会话的全部媒体与日期列表
+    // 先读取最新媒体，再在后台按游标补齐更早记录。
     void get().loadRoomMedia(room);
     void get().loadRoomAvailableDates(room);
   },
@@ -372,34 +442,182 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!targetRoom) return;
 
     const key = roomKey(targetRoom);
-    set({ isLoadingMedia: true });
+    const existingState = get().mediaLoadStateByRoom[key] ?? emptyRoomMediaLoadState();
+    if (existingState.isLoading || existingState.isComplete) return;
+
+    const controller = new AbortController();
+    mediaAbortControllers.get(key)?.abort();
+    mediaAbortControllers.set(key, controller);
+
+    const isCurrentRoom = (state: ChatState) =>
+      state.selectedRoom !== null && roomKey(state.selectedRoom) === key;
+    const updateLoadState = (
+      update: (current: RoomMediaLoadState) => RoomMediaLoadState,
+    ) => {
+      set((state) => {
+        const next = update(
+          state.mediaLoadStateByRoom[key] ?? emptyRoomMediaLoadState(),
+        );
+        return {
+          mediaLoadStateByRoom: {
+            ...state.mediaLoadStateByRoom,
+            [key]: next,
+          },
+          ...(isCurrentRoom(state) ? { isLoadingMedia: next.isLoading } : {}),
+        };
+      });
+    };
+    const mergeMediaPage = (items: MediaItem[]) => {
+      if (items.length === 0) return;
+      set((state) => {
+        const merged = mergeMediaItems(
+          state.mediaListByRoom[key] ?? [],
+          extractMediaItems(state.messagesByRoom[key] ?? []),
+          items,
+        );
+        return {
+          mediaListByRoom: {
+            ...state.mediaListByRoom,
+            [key]: merged,
+          },
+          ...(isCurrentRoom(state) ? { mediaList: merged } : {}),
+        };
+      });
+    };
+    const applyPage = (
+      mediaType: MediaType,
+      page: MediaPage,
+      initial: boolean,
+      seenCursors: Set<number>,
+    ) => {
+      mergeMediaPage(page.items);
+      updateLoadState((current) => {
+        const oldCursor = mediaType === "image" ? current.imageCursor : current.videoCursor;
+        const canContinue = !page.hasOlder || (
+          page.items.length > 0 &&
+          page.olderCursorId > 0 &&
+          page.olderCursorId !== oldCursor &&
+          !seenCursors.has(page.olderCursorId)
+        );
+        if (!initial && oldCursor > 0) {
+          seenCursors.add(oldCursor);
+        }
+        const hasOlder = page.hasOlder && canContinue;
+        const next = mediaType === "image"
+          ? {
+              ...current,
+              imageCursor: page.olderCursorId,
+              imageHasOlder: hasOlder,
+              imageLoaded: true,
+            }
+          : {
+              ...current,
+              videoCursor: page.olderCursorId,
+              videoHasOlder: hasOlder,
+              videoLoaded: true,
+            };
+        next.initialLoaded = next.imageLoaded && next.videoLoaded;
+        next.isComplete = next.initialLoaded && !next.imageHasOlder && !next.videoHasOlder;
+        return next;
+      });
+    };
+    const fetchPage = (mediaType: MediaType, cursorId: number, pageSize: number) =>
+      fetchRoomMediaPage({
+        room: targetRoom,
+        mediaType,
+        cursorId,
+        pageSize,
+        signal: controller.signal,
+      });
+
+    updateLoadState((current) => ({ ...current, isLoading: true }));
+    const seenCursors = {
+      image: new Set<number>(),
+      video: new Set<number>(),
+    };
 
     try {
-      const fullMedia = await fetchRoomAllMedia(targetRoom);
-      const localExtracted = extractMediaItems(
-        get().messagesByRoom[key] ?? [],
+      const initialState = get().mediaLoadStateByRoom[key] ?? emptyRoomMediaLoadState();
+      const initialTypes = (["image", "video"] as MediaType[]).filter(
+        (mediaType) =>
+          mediaType === "image" ? !initialState.imageLoaded : !initialState.videoLoaded,
       );
 
-      // 合并去重
-      const byUrl = new Map<string, MediaItem>();
-      for (const item of [...fullMedia, ...localExtracted]) {
-        byUrl.set(item.url, item);
+      if (initialTypes.length > 0) {
+        const initialResults = await Promise.allSettled(
+          initialTypes.map((mediaType) =>
+            fetchPage(mediaType, 0, INITIAL_MEDIA_PAGE_SIZE),
+          ),
+        );
+        if (controller.signal.aborted) return;
+
+        let initialFailed = false;
+        for (let index = 0; index < initialResults.length; index++) {
+          const result = initialResults[index];
+          const mediaType = initialTypes[index];
+          if (result.status !== "fulfilled") {
+            initialFailed = true;
+            continue;
+          }
+          applyPage(mediaType, result.value, true, seenCursors[mediaType]);
+        }
+        if (initialFailed || !(get().mediaLoadStateByRoom[key]?.initialLoaded)) {
+          updateLoadState((current) => ({ ...current, isLoading: false }));
+          return;
+        }
       }
-      const mergedMedia = Array.from(byUrl.values()).sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-      );
 
-      set((state) => ({
-        mediaListByRoom: {
-          ...state.mediaListByRoom,
-          [key]: mergedMedia,
-        },
-        mediaList: mergedMedia,
-        isLoadingMedia: false,
-      }));
-    } catch {
-      set({ isLoadingMedia: false });
+      while (!controller.signal.aborted) {
+        const current = get().mediaLoadStateByRoom[key] ?? emptyRoomMediaLoadState();
+        if (!current.imageHasOlder && !current.videoHasOlder) {
+          updateLoadState((state) => ({
+            ...state,
+            isLoading: false,
+            isComplete: state.initialLoaded,
+          }));
+          return;
+        }
+
+        await new Promise((resolve) => window.setTimeout(resolve, MEDIA_PAGE_YIELD_MS));
+        if (controller.signal.aborted) return;
+
+        const pageTypes = (["image", "video"] as MediaType[]).filter(
+          (mediaType) =>
+            mediaType === "image" ? current.imageHasOlder : current.videoHasOlder,
+        );
+        const results = await Promise.allSettled(
+          pageTypes.map((mediaType) =>
+            fetchPage(
+              mediaType,
+              mediaType === "image" ? current.imageCursor : current.videoCursor,
+              BACKGROUND_MEDIA_PAGE_SIZE,
+            ),
+          ),
+        );
+        if (controller.signal.aborted) return;
+
+        let pageFailed = false;
+        for (let index = 0; index < results.length; index++) {
+          const result = results[index];
+          const mediaType = pageTypes[index];
+          if (result.status !== "fulfilled") {
+            pageFailed = true;
+            continue;
+          }
+          applyPage(mediaType, result.value, false, seenCursors[mediaType]);
+        }
+        if (pageFailed) {
+          updateLoadState((state) => ({ ...state, isLoading: false }));
+          return;
+        }
+      }
+    } finally {
+      if (mediaAbortControllers.get(key) === controller) {
+        mediaAbortControllers.delete(key);
+        updateLoadState((current) =>
+          current.isLoading ? { ...current, isLoading: false } : current,
+        );
+      }
     }
   },
 
@@ -449,14 +667,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const localMedia = extractMediaItems(sorted);
         const localDates = extractDatesFromMessages(sorted);
         const existingMedia = state.mediaListByRoom[key] || [];
-        const byUrl = new Map<string, MediaItem>();
-        for (const item of [...existingMedia, ...localMedia]) {
-          byUrl.set(item.url, item);
-        }
-        const mergedMedia = Array.from(byUrl.values()).sort(
-          (a, b) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-        );
+        const mergedMedia = mergeMediaItems(existingMedia, localMedia);
 
         const existingDates = state.availableDatesByRoom[key] || [];
         const mergedDates = Array.from(
@@ -537,6 +748,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         const existing = state.messagesByRoom[key] ?? [];
         const merged = uniqueSortedMessages([...page.messages, ...existing]);
+        const existingMedia = state.mediaListByRoom[key] ?? [];
+        const mergedMedia = mergeMediaItems(
+          existingMedia,
+          extractMediaItems(page.messages),
+        );
         const addedDates = extractDatesFromMessages(page.messages);
         const existingDates = state.availableDatesByRoom[key] || [];
         const mergedDates = Array.from(
@@ -556,11 +772,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...state.hasMoreByRoom,
             [key]: page.hasOlder,
           },
+          mediaListByRoom: {
+            ...state.mediaListByRoom,
+            [key]: mergedMedia,
+          },
+          ...(state.selectedRoom && roomKey(state.selectedRoom) === key
+            ? { mediaList: mergedMedia }
+            : {}),
           availableDatesByRoom: {
             ...state.availableDatesByRoom,
             [key]: mergedDates,
           },
-          messageGroups: groupMessagesByDate(merged),
           isLoadingMore: false,
         };
       });
@@ -603,6 +825,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         const existing = state.messagesByRoom[key] ?? [];
         const merged = uniqueSortedMessages([...existing, ...page.messages]);
+        const existingMedia = state.mediaListByRoom[key] ?? [];
+        const mergedMedia = mergeMediaItems(
+          existingMedia,
+          extractMediaItems(page.messages),
+        );
         const addedDates = extractDatesFromMessages(page.messages);
         const existingDates = state.availableDatesByRoom[key] || [];
         const mergedDates = Array.from(
@@ -626,11 +853,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...state.hasMoreByRoom,
             [key]: page.hasOlder,
           },
+          mediaListByRoom: {
+            ...state.mediaListByRoom,
+            [key]: mergedMedia,
+          },
+          ...(state.selectedRoom && roomKey(state.selectedRoom) === key
+            ? { mediaList: mergedMedia }
+            : {}),
           availableDatesByRoom: {
             ...state.availableDatesByRoom,
             [key]: mergedDates,
           },
-          messageGroups: groupMessagesByDate(merged),
           isLoadingNewer: false,
         };
       });
@@ -1117,7 +1350,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...state.messagesByRoom,
             [key]: merged,
           },
-          messageGroups: groupMessagesByDate(merged),
         };
       });
 
@@ -1181,6 +1413,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         const currentMessages = state.messagesByRoom[key] ?? [];
         const merged = uniqueSortedMessages([...currentMessages, ...page.messages]);
+        const existingMedia = state.mediaListByRoom[key] ?? [];
+        const mergedMedia = mergeMediaItems(
+          existingMedia,
+          extractMediaItems(page.messages),
+        );
         return {
           messagesByRoom: {
             ...state.messagesByRoom,
@@ -1194,7 +1431,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...state.hasNewerByRoom,
             [key]: page.hasNewer,
           },
-          messageGroups: groupMessagesByDate(merged),
+          mediaListByRoom: {
+            ...state.mediaListByRoom,
+            [key]: mergedMedia,
+          },
+          ...(state.selectedRoom && roomKey(state.selectedRoom) === key
+            ? { mediaList: mergedMedia }
+            : {}),
         };
       });
     } catch {

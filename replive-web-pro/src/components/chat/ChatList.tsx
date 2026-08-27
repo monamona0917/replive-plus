@@ -348,7 +348,7 @@ export const ChatList = () => {
   if (!selectedRoom) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-muted-foreground select-none">
-        <p className="text-sm">请从左侧列表选择一个聊天频道或房间开始浏览</p>
+        <p className="text-sm">请从左侧列表选择一个聊天对象</p>
       </div>
     );
   }
@@ -396,7 +396,7 @@ export const ChatList = () => {
             {/* History End Badge */}
             {!hasMoreHistory && messageGroups.length > 0 && (
               <div className="text-[11px] text-center text-muted-foreground/60 py-4 select-none">
-                — 已到达本地数据库最早历史记录 —
+                -已无更早聊天记录-
               </div>
             )}
 

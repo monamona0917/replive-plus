@@ -7,7 +7,9 @@ type ChatRoom struct {
 	DisplayName         string `json:"display_name"`
 	ChatRoomId          string `json:"chat_room_id"`
 	AvatarUrl           string `json:"avatar_url"`
+	AvatarPath          string `json:"-" gorm:"column:avatar_path"`
 	TalentLastCheckTime int64  `json:"talent_last_check_time"`
+	DayCount            int64  `json:"day_count" gorm:"column:day_count"`
 	LastMessageTime     int64  `json:"last_message_time" gorm:"column:last_message_time;->;-:migration"`
 	LastMessageContent  string `json:"last_message_content" gorm:"column:last_message_content;->;-:migration"`
 	LastMessageType     int32  `json:"last_message_type" gorm:"column:last_message_type;->;-:migration"`
@@ -64,6 +66,7 @@ type UserPrivate struct {
 	UniqueId                               string `json:"unique_id"`
 	DisplayName                            string `json:"display_name"`
 	ProfileImageUrl                        string `json:"profile_image_url"`
+	ProfileImagePath                       string `json:"-" gorm:"column:profile_image_path"`
 	SmProfileImageUrl                      string `json:"sm_profile_image_url"`
 	ProfileBackgroundImageUrl              string `json:"profile_background_image_url"`
 	Biography                              string `json:"biography"`
@@ -131,7 +134,9 @@ func createTable() error {
     display_name TEXT NOT NULL,
     chat_room_id TEXT NOT NULL,
     avatar_url TEXT NOT NULL,
-    talent_last_check_time INTEGER NOT NULL DEFAULT 0
+    avatar_path TEXT NOT NULL DEFAULT '',
+    talent_last_check_time INTEGER NOT NULL DEFAULT 0,
+    day_count INTEGER NOT NULL DEFAULT 0
 )`).Error
 	if err != nil {
 		return err
@@ -197,6 +202,7 @@ func createTable() error {
     unique_id TEXT NOT NULL DEFAULT '',
     display_name TEXT NOT NULL DEFAULT '',
     profile_image_url TEXT NOT NULL DEFAULT '',
+    profile_image_path TEXT NOT NULL DEFAULT '',
     sm_profile_image_url TEXT NOT NULL DEFAULT '',
     profile_background_image_url TEXT NOT NULL DEFAULT '',
     biography TEXT NOT NULL DEFAULT '',
@@ -234,6 +240,9 @@ func createTable() error {
 	}
 	err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_private_user_id ON user_private(user_id);`).Error
 	if err != nil {
+		return err
+	}
+	if err := ensureUserPrivateProfileColumns(); err != nil {
 		return err
 	}
 	err = db.Exec(`CREATE TABLE IF NOT EXISTS followings (
@@ -300,6 +309,7 @@ func createTable() error {
     talent_unique_id TEXT NOT NULL DEFAULT '',
     talent_display_name TEXT NOT NULL DEFAULT '',
     talent_avatar_url TEXT NOT NULL DEFAULT '',
+    talent_avatar_path TEXT NOT NULL DEFAULT '',
     member_user_id TEXT NOT NULL DEFAULT '',
     member_background_image_url TEXT NOT NULL DEFAULT '',
     talent_last_check_time_ms INTEGER NOT NULL DEFAULT 0,
@@ -361,6 +371,8 @@ func ensureChatRoomTimingColumns() error {
 		sql  string
 	}{
 		{name: "talent_last_check_time", sql: "ALTER TABLE chat_rooms ADD COLUMN talent_last_check_time INTEGER NOT NULL DEFAULT 0"},
+		{name: "day_count", sql: "ALTER TABLE chat_rooms ADD COLUMN day_count INTEGER NOT NULL DEFAULT 0"},
+		{name: "avatar_path", sql: "ALTER TABLE chat_rooms ADD COLUMN avatar_path TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, column := range columns {
 		if db.Migrator().HasColumn(&ChatRoom{}, column.name) {
@@ -373,6 +385,13 @@ func ensureChatRoomTimingColumns() error {
 	return nil
 }
 
+func ensureUserPrivateProfileColumns() error {
+	if db.Migrator().HasColumn(&UserPrivate{}, "profile_image_path") {
+		return nil
+	}
+	return db.Exec("ALTER TABLE user_private ADD COLUMN profile_image_path TEXT NOT NULL DEFAULT ''").Error
+}
+
 func ensurePrimeChatRoomTimingColumns() error {
 	columns := []struct {
 		name string
@@ -380,6 +399,7 @@ func ensurePrimeChatRoomTimingColumns() error {
 	}{
 		{name: "talent_last_check_time_ms", sql: "ALTER TABLE prime_chat_rooms ADD COLUMN talent_last_check_time_ms INTEGER NOT NULL DEFAULT 0"},
 		{name: "member_last_check_time_ms", sql: "ALTER TABLE prime_chat_rooms ADD COLUMN member_last_check_time_ms INTEGER NOT NULL DEFAULT 0"},
+		{name: "talent_avatar_path", sql: "ALTER TABLE prime_chat_rooms ADD COLUMN talent_avatar_path TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, column := range columns {
 		if db.Migrator().HasColumn(&PrimeChatRoom{}, column.name) {
@@ -421,6 +441,7 @@ type PrimeChatRoom struct {
 	TalentUniqueId            string `json:"talent_unique_id"`
 	TalentDisplayName         string `json:"talent_display_name"`
 	TalentAvatarUrl           string `json:"talent_avatar_url"`
+	TalentAvatarPath          string `json:"-" gorm:"column:talent_avatar_path"`
 	MemberUserId              string `json:"member_user_id"`
 	MemberBackgroundImageUrl  string `json:"member_background_image_url"`
 	TalentLastCheckTimeMillis int64  `json:"talent_last_check_time_ms" gorm:"column:talent_last_check_time_ms"`

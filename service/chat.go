@@ -13,6 +13,7 @@ import (
 	"replive/rep_api"
 	"replive/utils"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,11 +34,13 @@ var (
 type ChatSenderSummary struct {
 	NewMessages      int
 	NewImageMessages int
+	NewVideoMessages int
 }
 
 type ChatSyncSummary struct {
 	NewMessages      int
 	NewImageMessages int
+	NewVideoMessages int
 	DownloadedImages int
 	SkippedImages    int
 	BySender         map[string]ChatSenderSummary
@@ -60,12 +63,14 @@ func (s *ChatSyncSummary) merge(other ChatSyncSummary) {
 	s.ensureSenderMap()
 	s.NewMessages += other.NewMessages
 	s.NewImageMessages += other.NewImageMessages
+	s.NewVideoMessages += other.NewVideoMessages
 	s.DownloadedImages += other.DownloadedImages
 	s.SkippedImages += other.SkippedImages
 	for name, sender := range other.BySender {
 		current := s.BySender[name]
 		current.NewMessages += sender.NewMessages
 		current.NewImageMessages += sender.NewImageMessages
+		current.NewVideoMessages += sender.NewVideoMessages
 		s.BySender[name] = current
 	}
 }
@@ -137,20 +142,47 @@ func saveChatRoomsWithSummary() (ChatSyncSummary, error) {
 			}
 			timing, timingErr := rep_api.ParseChatRoomTiming(chatRoom)
 			if timingErr != nil {
-				hlog.Warnf("Fandom room timing probe parse failed, chatRoomId: %s, err: %v", chatRoom.ChatRoomId, timingErr)
+				hlog.Warnf(
+					"Fandom room timing probe parse failed, chatRoomId: %s, err: %v",
+					chatRoom.ChatRoomId,
+					timingErr,
+				)
 			}
 			logChatRoomTimingProbe(chatRoom, timing)
+
+			existingRoom, exists := chatRoomMap[chatRoom.ChatRoomId]
+			dayCount := int64(0)
+			if timingErr == nil && timing.HasDayCount {
+				// 服务端明确下发了 day_count，使用新值
+				dayCount = timing.DayCount
+			} else if exists {
+				// 字段缺失或解析失败，保留数据库中的旧值
+				dayCount = existingRoom.DayCount
+			}
+
+			talentLastCheckTime := int64(0)
+			if timingErr == nil && timing.HasTalentLastCheckTime {
+				talentLastCheckTime = chatRoomTimingUnix(
+					timing.TalentLastCheckTime,
+					timing.HasTalentLastCheckTime,
+				)
+			} else if exists {
+				// 字段缺失或解析失败，保留数据库中的旧值
+				talentLastCheckTime = existingRoom.TalentLastCheckTime
+			}
+
 			innerChatRoom := &dal.ChatRoom{
 				UserId:              chatRoom.UserId,
 				UniqueId:            chatRoom.UserProfile.UniqueId,
 				DisplayName:         chatRoom.UserProfile.DisplayName,
 				ChatRoomId:          chatRoom.ChatRoomId,
 				AvatarUrl:           chatRoom.UserProfile.AvatarUrl,
-				TalentLastCheckTime: chatRoomTimingUnix(timing.TalentLastCheckTime, timing.HasTalentLastCheckTime),
+				TalentLastCheckTime: talentLastCheckTime,
+				DayCount:            dayCount,
 			}
 			currentRooms = append(currentRooms, innerChatRoom)
-			if existing, ok := chatRoomMap[chatRoom.ChatRoomId]; ok {
-				updates := changedChatRoomFields(existing, innerChatRoom)
+			if exists {
+				updates := changedChatRoomFields(existingRoom, innerChatRoom)
 				if len(updates) > 0 {
 					if err := db.Model(&dal.ChatRoom{}).
 						Where("chat_room_id = ?", innerChatRoom.ChatRoomId).
@@ -174,6 +206,24 @@ func saveChatRoomsWithSummary() (ChatSyncSummary, error) {
 	if err != nil {
 		return summary, err
 	}
+	for _, chatRoom := range chatRooms {
+		if chatRoom == nil || chatRoom.UserProfile == nil || strings.TrimSpace(chatRoom.UserProfile.AvatarUrl) == "" {
+			continue
+		}
+		path, _, downloadErr := downloadProfileMediaPath(
+			firstNonEmpty(chatRoom.UserProfile.DisplayName, chatRoom.UserProfile.UniqueId, chatRoom.UserProfile.UserId),
+			chatRoom.UserProfile.AvatarUrl,
+			time.Now(),
+			"chat_room_avatar",
+		)
+		if downloadErr != nil {
+			hlog.Warnf("download Fandom avatar failed, chatRoomId=%s: %v", chatRoom.ChatRoomId, downloadErr)
+			continue
+		}
+		if err := dal.UpdateChatRoomAvatarPath(chatRoom.ChatRoomId, path); err != nil {
+			hlog.Warnf("save Fandom avatar path failed, chatRoomId=%s: %v", chatRoom.ChatRoomId, err)
+		}
+	}
 	if len(currentRooms) == 0 {
 		chatRoomLocker.Lock()
 		chatRoomList = currentRooms
@@ -188,7 +238,7 @@ func saveChatRoomsWithSummary() (ChatSyncSummary, error) {
 	chatRoomLocker.Unlock()
 	hasSuccess := len(newRooms) == 0
 	for _, chatRoom := range newRooms {
-		_, err := refreshOldChatMessagesWithSummary(chatRoom.UserId, chatRoom.ChatRoomId)
+		_, err := refreshOldChatMessagesWithSummary(chatRoom.UserId, chatRoom.ChatRoomId, chatRoom.DisplayName)
 		if err != nil {
 			hlog.Errorf("refreshOldChatMessages failed, err: %v", err)
 			continue
@@ -236,9 +286,13 @@ func changedChatRoomFields(existing *dal.ChatRoom, next *dal.ChatRoom) map[strin
 	}
 	if existing.AvatarUrl != next.AvatarUrl {
 		updates["avatar_url"] = next.AvatarUrl
+		updates["avatar_path"] = ""
 	}
 	if existing.TalentLastCheckTime != next.TalentLastCheckTime {
 		updates["talent_last_check_time"] = next.TalentLastCheckTime
+	}
+	if existing.DayCount != next.DayCount {
+		updates["day_count"] = next.DayCount
 	}
 	return updates
 }
@@ -274,7 +328,7 @@ func formatChatRoomProbeTime(value time.Time, present bool) string {
 	if !present {
 		return "unset"
 	}
-	return fmt.Sprintf("%s (unix=%d)", value.In(utils.JapanLocation()).Format(time.RFC3339Nano), value.Unix())
+	return fmt.Sprintf("%s (unix=%d)", value.In(utils.LocalLocation()).Format(time.RFC3339Nano), value.Unix())
 }
 
 func chatRoomTimingUnix(value time.Time, present bool) int64 {
@@ -363,7 +417,7 @@ func updateNewMessagesWithSummary(ctx context.Context, uid, roomId, displayName 
 		return summary, err
 	}
 	if len(existMessages) == 0 {
-		_, err := refreshOldChatMessagesWithSummary(uid, roomId)
+		_, err := refreshOldChatMessagesWithSummary(uid, roomId, displayName)
 		if err != nil {
 			return summary, err
 		}
@@ -378,7 +432,7 @@ func updateNewMessagesWithSummary(ctx context.Context, uid, roomId, displayName 
 		return summary, nil
 	}
 	hlog.Infof("updateNewMessages, uid: %v, roomId: %v, name: %v, msg size: %v", uid, roomId, displayName, len(totalMsg))
-	summary, err = saveMessageWithSummary(totalMsg)
+	summary, err = saveMessageWithSummaryForTalent(totalMsg, displayName)
 	if err != nil {
 		hlog.Errorf("Failed to save chat message: %v", err)
 		return summary, err
@@ -391,7 +445,7 @@ func refreshOldChatMessages(uid, roomId string) error {
 	return err
 }
 
-func refreshOldChatMessagesWithSummary(uid, roomId string) (ChatSyncSummary, error) {
+func refreshOldChatMessagesWithSummary(uid, roomId string, talentDisplayNames ...string) (ChatSyncSummary, error) {
 	summary := newChatSyncSummary()
 	// 1. 先获取最新一条
 	ctx := context.Background()
@@ -414,7 +468,11 @@ func refreshOldChatMessagesWithSummary(uid, roomId string) (ChatSyncSummary, err
 	}
 	totalMsg = append(messages, totalMsg...)
 	// 3. 保存
-	summary, err = saveMessageWithSummary(totalMsg)
+	talentDisplayName := ""
+	if len(talentDisplayNames) > 0 {
+		talentDisplayName = talentDisplayNames[0]
+	}
+	summary, err = saveMessageWithSummaryForTalent(totalMsg, talentDisplayName)
 	if err != nil {
 		hlog.Errorf("Failed to save chat message: %v", err)
 		return summary, err
@@ -528,12 +586,16 @@ func saveMessage(messages []*model.ListChatMessages) error {
 }
 
 func saveMessageWithSummary(messages []*model.ListChatMessages) (ChatSyncSummary, error) {
+	return saveMessageWithSummaryForTalent(messages, "")
+}
+
+func saveMessageWithSummaryForTalent(messages []*model.ListChatMessages, talentDisplayName string) (ChatSyncSummary, error) {
 	summary := newChatSyncSummary()
 	sort.Slice(messages, func(i, j int) bool {
 		return messages[i].GetTimestamp().GetSeconds() < messages[j].GetTimestamp().GetSeconds()
 	})
 
-	savedMessages := make([]*dal.ChatMessage, 0)
+	notificationMessages := make([]*dal.ChatMessage, 0)
 	for _, msg := range messages {
 		if msg == nil {
 			continue
@@ -556,29 +618,42 @@ func saveMessageWithSummary(messages []*model.ListChatMessages) (ChatSyncSummary
 			return summary, err
 		}
 		if saved {
-			savedMessages = append(savedMessages, dbMsg)
-			summary.NewMessages++
-			summary.ensureSenderMap()
-			sender := summary.BySender[dbMsg.DisplayName]
-			sender.NewMessages++
-			if dbMsg.MsgType == int32(model.ChatMessageType_Image) {
-				summary.NewImageMessages++
-				sender.NewImageMessages++
-				switch mediaResult {
-				case MediaDownloaded:
-					summary.DownloadedImages++
-				case MediaSkipped:
-					summary.SkippedImages++
+			if isChatTalentMessage(dbMsg, talentDisplayName) {
+				notificationMessages = append(notificationMessages, dbMsg)
+				summary.NewMessages++
+				summary.ensureSenderMap()
+				sender := summary.BySender[dbMsg.DisplayName]
+				sender.NewMessages++
+				if dbMsg.MsgType == int32(model.ChatMessageType_Image) {
+					summary.NewImageMessages++
+					sender.NewImageMessages++
+					switch mediaResult {
+					case MediaDownloaded:
+						summary.DownloadedImages++
+					case MediaSkipped:
+						summary.SkippedImages++
+					}
 				}
+				if dbMsg.MsgType == int32(model.ChatMessageType_Video) {
+					summary.NewVideoMessages++
+					sender.NewVideoMessages++
+				}
+				summary.BySender[dbMsg.DisplayName] = sender
 			}
-			summary.BySender[dbMsg.DisplayName] = sender
 		}
 	}
 
-	for _, msg := range savedMessages {
+	for _, msg := range notificationMessages {
 		sendChatEmailFn(msg)
 	}
 	return summary, nil
+}
+
+func isChatTalentMessage(msg *dal.ChatMessage, talentDisplayName string) bool {
+	if msg == nil || talentDisplayName == "" || msg.DisplayName == "" {
+		return msg != nil
+	}
+	return msg.DisplayName == talentDisplayName
 }
 
 func buildChatMessage(msg *model.ListChatMessages) (*dal.ChatMessage, error) {
@@ -662,11 +737,7 @@ func logChatSyncMessages(summary ChatSyncSummary) {
 		sort.Strings(names)
 		for _, name := range names {
 			sender := summary.BySender[name]
-			if sender.NewImageMessages > 0 {
-				hlog.Infof("%s 给你发新消息了！而且有 %d 张新照片！⸜(*ˊᗜˋ*)⸝", name, sender.NewImageMessages)
-			} else {
-				hlog.Infof("%s 给你发新消息了！⸜(*ˊᗜˋ*)⸝", name)
-			}
+			hlog.Infof("%s", formatChatSenderNotification(name, sender))
 		}
 		chatMessageLogState.hadMessages = true
 	} else if !chatMessageLogState.initialized || chatMessageLogState.hadMessages ||
@@ -676,6 +747,17 @@ func logChatSyncMessages(summary ChatSyncSummary) {
 		chatMessageLogState.lastNoMessageLog = time.Now()
 	}
 	chatMessageLogState.initialized = true
+}
+
+func formatChatSenderNotification(name string, sender ChatSenderSummary) string {
+	message := fmt.Sprintf("%s 给你发了%d条新消息！", name, sender.NewMessages)
+	if sender.NewImageMessages > 0 {
+		message += fmt.Sprintf("而且有 %d 张新照片！", sender.NewImageMessages)
+	}
+	if sender.NewVideoMessages > 0 {
+		message += fmt.Sprintf("%d个新视频！", sender.NewVideoMessages)
+	}
+	return message + "⸜(*ˊᗜˋ*)⸝"
 }
 
 func chatMessageExists(chatMessageID string) (bool, error) {
