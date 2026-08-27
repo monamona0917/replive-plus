@@ -2,6 +2,7 @@ package dal
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -44,8 +45,19 @@ func WithWriteDB(fn func(*gorm.DB) error) error {
 }
 
 func InitDB() error {
+	return InitDBAt("./sqlite.db")
+}
+
+// InitDBAt opens the local database at an explicit path. The web-only
+// executable uses this to open the database belonging to its data directory
+// without starting the online backend.
+func InitDBAt(path string) error {
+	if path == "" {
+		path = "./sqlite.db"
+	}
+	path = filepath.Clean(path)
 	var err error
-	db, err = gorm.Open(sqlite.Open("./sqlite.db"), &gorm.Config{
+	db, err = gorm.Open(sqlite.Open(path), &gorm.Config{
 		Logger: &DLog{hlog.DefaultLogger()},
 	})
 	if err != nil {

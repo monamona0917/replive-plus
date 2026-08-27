@@ -26,6 +26,7 @@ replive-web-pro/node_modules/
 replive-web-pro/dist/
 dist/
 .gocache/
+.gocache-offline-web/
 # Local AI files and generated dependencies
 plan/
 agents.md

@@ -13,6 +13,7 @@ export const AppLayout = () => {
   const loadRooms = useChatStore((s) => s.loadRooms);
   const loadUserProfile = useChatStore((s) => s.loadUserProfile);
   const selectedRoom = useChatStore((s) => s.selectedRoom);
+  const userProfile = useChatStore((s) => s.userProfile);
   const pollNewMessages = useChatStore((s) => s.pollNewMessages);
   const setSearchDrawerOpen = useChatStore((s) => s.setSearchDrawerOpen);
 
@@ -24,21 +25,21 @@ export const AppLayout = () => {
 
   // 后台轮询当前房间的新消息（每 3 秒增量拉取）
   useEffect(() => {
-    if (!selectedRoom || selectedRoom.category === "prime") return;
+    if (!selectedRoom || selectedRoom.category === "prime" || userProfile?.offlineMode === true) return;
     const interval = setInterval(() => {
       void pollNewMessages(selectedRoom);
     }, 3000);
     return () => clearInterval(interval);
-  }, [selectedRoom, pollNewMessages]);
+  }, [selectedRoom, pollNewMessages, userProfile?.offlineMode]);
 
   // 房间列表单独低频刷新，消息轮询会同步更新已加载房间的摘要。
   useEffect(() => {
-    if (!selectedRoom || selectedRoom.category === "prime") return;
+    if (!selectedRoom || selectedRoom.category === "prime" || userProfile?.offlineMode === true) return;
     const interval = setInterval(() => {
       void loadRooms();
     }, 15000);
     return () => clearInterval(interval);
-  }, [selectedRoom, loadRooms]);
+  }, [selectedRoom, loadRooms, userProfile?.offlineMode]);
 
   // 全局快捷键监听 (Ctrl+F 全局搜索)
   useEffect(() => {

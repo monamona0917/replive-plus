@@ -54,13 +54,6 @@ export const MessageBubble = memo(
       ? userProfile?.displayName || message.senderName || "me"
       : message.senderName || room.displayName;
 
-    const reactionLabel =
-      message.senderKind === "member"
-        ? "对方添加的 reaction"
-        : message.senderKind === "talent"
-          ? "我添加的 reaction"
-          : "reaction";
-
     const handleMediaClick = () => {
       if (!mediaSrc) return;
       openLightbox({
@@ -129,10 +122,7 @@ export const MessageBubble = memo(
               {formatTimeStr(message.createdAt)}
             </span>
             {isReadByTalent && (
-              <span
-                className="text-[10px] text-primary/80 font-mono"
-                title="主播最后进房时间在此条之后"
-              >
+              <span className="text-[10px] text-primary/80 font-mono">
                 既読
               </span>
             )}
@@ -225,10 +215,9 @@ export const MessageBubble = memo(
           {message.reactionEmoji && (
             <div
               className={cn(
-                "mt-1 px-2 py-0.5 rounded-full bg-muted border border-border/60 text-xs flex items-center gap-1 shadow-2xs",
+                "mt-0.5 text-sm select-none",
                 isMine ? "self-end" : "self-start",
               )}
-              title={reactionLabel}
             >
               <span>{message.reactionEmoji}</span>
             </div>

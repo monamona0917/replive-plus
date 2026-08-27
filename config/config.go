@@ -88,6 +88,24 @@ func LoadConfig(path string) error {
 	return nil
 }
 
+// LoadConfigIfExists loads configuration for local-only consumers without
+// creating a new config file. A missing config uses the default media folder.
+func LoadConfigIfExists(path string) error {
+	if path == "" {
+		path = "config.yaml"
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			Conf = DefaultConfig()
+			configPath = path
+			mediaPath = "./media"
+			return nil
+		}
+		return fmt.Errorf("读取配置文件失败: %v", err)
+	}
+	return LoadConfig(path)
+}
+
 func GetMediaPath() string {
 	return mediaPath
 }
