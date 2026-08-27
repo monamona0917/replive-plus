@@ -1,14 +1,15 @@
 # Replive+
 
 基于 [Chilfish/replive-oyu](https://github.com/Chilfish/replive-oyu) 和 [huangwg2529/nsy_chat_live](https://github.com/huangwg2529/nsy_chat_live) 进行重构和扩展
+
 详细使用说明参照原项目nsy_chat_live中提供的 https://my.feishu.cn/wiki/PXe9wkiksifZR9kpVoucsKs1nQe
 
 ### 具体修改内容
 
-- 重构Web 前端，可在浏览器中使用聊天记录。
+- 重构 Web 前端，支持消息发送，可在 `config.yaml` 中通过 `send_chat: true/false` 开启或关闭。
 - 支持显示Fandom已读状态。
-- 显示 Fandom 订阅天数及对应阶段样式。显示账号可输入字符上限。
-- 新增 Prime Chat 房间
+- 支持显示 Fandom 订阅天数及当前订阅天数的可输入字符上限。
+- 新增 Prime Chat。
 
 ## 构建与运行（Windows）
 
@@ -16,8 +17,4 @@
 
 - `replive-plus.exe`：后端
 - `replive-plus-web.exe`：内置 Web 前端
-
-先启动 `replive-plus.exe` 完成首次配置和登录，再启动 `replive-plus-web.exe`。后者默认会打开浏览器；需要直播录制时，还需安装 `ffmpeg` 或在 `config.yaml` 中配置其路径。
-
-`build.bat` 是构建脚本，需要 Go 和 Node.js 环境。
 
