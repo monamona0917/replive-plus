@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+// 基于解包源码（/Users/bytedance/tools/replive/replive_src）里 Wire 生成代码反推。
+// 目标：记录“我关注的声优/推し列表”对应的接口、入参和 resp 结构。
+
+package model;
+option go_package = "./model";
+
+import "http.proto";
+
+// POST https://api.replive.com/user.v1.UserService/ListMyOshis
+message ListMyOshisRequest {
+  int64 max_page_size = 1;
+  string page_token = 2;
+}
+
+message ListMyOshisResponse {
+  repeated ListMyOshisOshi oshis = 1;
+  string next_page_token = 2;
+  int64 my_oshis_count = 3;
+}
+
+enum OshiType {
+  OSHI_TYPE_UNSPECIFIED = 0;
+  OSHI_TYPE_INDIVIDUAL = 1;
+  OSHI_TYPE_GROUP = 2;
+}
+
+message ListMyOshisOshi {
+  string oshi_id = 1;
+  string name = 2;
+  reserved 3, 6, 8, 100, 101;
+  string profile_image_url = 4;
+  OshiUser user = 5;
+  string membership_image_url = 7;
+}
+
+message OshiUser {
+  string user_id = 1;
+  string unique_id = 2;
+  string display_name = 3;
+  string profile_image_url = 4;
+  reserved 5 to 12, 14 to 17, 19 to 25;
+  string profile_background_image_url = 13;
+  string sm_profile_image_url = 18;
+}
+
+message GetUserPrivateRequest {
+}
+
+message GetUserPrivateResponse {
+  UserPrivate user = 1;
+}
+
+// POST https://api.replive.com/user.v1.UserService/ListFollowings
+message ListFollowingsRequest {
+  string user_id = 1;
+  string prefix = 2;
+  int64 max_page_size = 3;
+  string page_token = 4;
+  FollowTargetType type = 5;
+}
+
+message ListFollowingsResponse {
+  repeated FollowTarget follow_targets = 1;
+  string next_page_token = 2;
+}
+
+enum FollowTargetType {
+  FOLLOW_TARGET_TYPE_UNSPECIFIED = 0;
+  FOLLOW_TARGET_TYPE_USER = 1;
+  FOLLOW_TARGET_TYPE_OSHI = 2;
+}
+
+message FollowTarget {
+  FollowTargetType type = 1;
+  OshiUser user = 2;
+  ListMyOshisOshi oshi = 3;
+}

@@ -1,0 +1,17 @@
+syntax = "proto3";
+package model;
+option go_package = "./model";
+
+// POST /user.v1.ChatService/SendChatMessage
+message SendChatMessageRequest {
+  string user_id = 1;
+  string chat_room_id = 2;
+  string content = 3;
+  string image_path = 4;
+  string user_upload_video_id = 5;
+  string chat_message_id = 6;
+  bool confirm_contains_forbidden_words_warning = 7;
+}
+
+message SendChatMessageResponse {
+}
