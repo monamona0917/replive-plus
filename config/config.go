@@ -29,7 +29,7 @@ type Config struct {
 	RefreshToken   string `yaml:"refresh_token"`
 	FfmpegPath     string `yaml:"ffmpeg_path"`
 	MediaPathWin   string `yaml:"media_path_win"`
-	MediaPathLinux string `yaml:"media_path_linux"`
+	MediaPathLinux string `yaml:"media_path_linux,omitempty"`
 	Email          struct {
 		SmtpHost string `yaml:"smtp_host"`
 		Sender   string `yaml:"sender"`
@@ -38,21 +38,6 @@ type Config struct {
 	} `yaml:"email"`
 	// send_chat: false 关闭发送消息功能, true 开启
 	SendChatEnabled bool `yaml:"send_chat"`
-	ScheduledChatMessage struct {
-		Enabled     bool   `yaml:"enabled"`
-		DisplayName string `yaml:"display_name"`
-		UserID      string `yaml:"user_id"`
-		ChatRoomID  string `yaml:"chat_room_id"`
-		Content     string `yaml:"content"`
-		Card        struct {
-			Enabled     bool   `yaml:"enabled"`
-			DisplayName string `yaml:"display_name"`
-			UserID      string `yaml:"user_id"`
-			LiveID      string `yaml:"live_id"`
-			Content     string `yaml:"content"`
-			CoinAmount  int64  `yaml:"coin_amount"`
-		} `yaml:"card"`
-	} `yaml:"scheduled_chat_message"`
 }
 
 var (

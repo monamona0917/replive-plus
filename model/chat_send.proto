@@ -15,16 +15,3 @@ message SendChatMessageRequest {
 
 message SendChatMessageResponse {
 }
-
-// POST /user.v1.LiveService/CreateCard
-message CreateCardRequest {
-  string user_id = 1;
-  string content = 2;
-  int64 coin_amount = 3;
-  string live_id = 4;
-  bool confirm_contains_forbidden_words_warning = 5;
-}
-
-message CreateCardResponse {
-}
-

@@ -24,7 +24,7 @@ const (
 	RepLiveHost = "https://api.replive.com/"
 )
 
-const maxConsecutiveRefreshUnauthorized = 30
+const maxConsecutiveRefreshUnauthorized = 5
 
 type RequestOptions struct {
 	SkipAuthorization bool
@@ -41,6 +41,8 @@ var (
 	authFailureHandler             func(error)
 	consecutiveRefreshUnauthorized int
 	refreshUnauthorizedNotified    bool
+	onlineMu                       sync.RWMutex
+	onlineMode                     bool
 )
 
 var ErrUnauthorized = errors.New("unauthorized")
@@ -51,11 +53,27 @@ func SetAuthFailureHandler(handler func(error)) {
 	authFailureMu.Unlock()
 }
 
+// SetOnline records whether the backend can currently use Replive APIs.
+// Local handlers continue to work when this is false, so the web UI can browse
+// the SQLite database in offline mode.
+func SetOnline(online bool) {
+	onlineMu.Lock()
+	onlineMode = online
+	onlineMu.Unlock()
+}
+
+func IsOnline() bool {
+	onlineMu.RLock()
+	defer onlineMu.RUnlock()
+	return onlineMode
+}
+
 func IsUnauthorizedError(err error) bool {
 	return err != nil && (errors.Is(err, ErrUnauthorized) || strings.Contains(err.Error(), "status code: 401"))
 }
 
 func InitHttp() error {
+	SetOnline(false)
 	refreshToken = config.Conf.RefreshToken
 	client = &http.Client{
 		Timeout: 240 * time.Second,
@@ -76,6 +94,7 @@ func InitHttp() error {
 	if _, err := getToken(); err != nil {
 		return fmt.Errorf("get token err: %v", err)
 	}
+	SetOnline(true)
 	return nil
 }
 
@@ -118,6 +137,7 @@ func recordRefreshTokenFailure(err error) {
 	consecutiveRefreshUnauthorized++
 	if consecutiveRefreshUnauthorized >= maxConsecutiveRefreshUnauthorized && !refreshUnauthorizedNotified {
 		refreshUnauthorizedNotified = true
+		SetOnline(false)
 		refreshToken = ""
 		accessToken = &model.RefreshAccessTokenResponse{AccessToken: "", AccessTokenExpireTime: &model.Timestamp{Seconds: 0}}
 		archivePath, archiveErr := config.ArchiveAndClearRefreshToken("repeated refresh 401")
@@ -126,7 +146,7 @@ func recordRefreshTokenFailure(err error) {
 		} else {
 			hlog.Errorf("archived invalid refresh token to %s", archivePath)
 		}
-		fatalErr = fmt.Errorf("refresh token unauthorized %d consecutive times; old refresh_token has been archived to %s and config refresh_token has been cleared, restart to login again", consecutiveRefreshUnauthorized, archivePath)
+		fatalErr = fmt.Errorf("%w: refresh token unauthorized %d consecutive times; old refresh_token has been archived to %s and config refresh_token has been cleared", ErrUnauthorized, consecutiveRefreshUnauthorized, archivePath)
 		handler = authFailureHandler
 	}
 	authFailureMu.Unlock()
@@ -185,13 +205,6 @@ func Get(url string) ([]byte, error) {
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("failed to do request, status code: %v, message: %v", resp.StatusCode, resp.Status)
-	}
-	if resp.StatusCode == http.StatusFound {
-		location, err := resp.Location()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get location: %v", err)
-		}
-		return Get(location.String())
 	}
 	if resp.Header.Get("Content-Encoding") == "gzip" {
 		buf, err := gzip.NewReader(resp.Body)
@@ -422,22 +435,4 @@ func PostWithClient(httpClient *http.Client, url string, body protoreflect.Proto
 		return nil, fmt.Errorf("failed to read response: %v", err)
 	}
 	return respBuf, nil
-}
-
-func PrintBuf(buf []byte) {
-	for _, b := range buf {
-		fmt.Print(b)
-		fmt.Print(" ")
-	}
-	fmt.Println("")
-	fmt.Println("done")
-}
-
-func unmarshalRequest(code string) error {
-	buf, err := base64.StdEncoding.DecodeString(code)
-	if err != nil {
-		return fmt.Errorf("failed to base64 decode code: %v, err: %v", code, err)
-	}
-	PrintBuf(buf)
-	return nil
 }

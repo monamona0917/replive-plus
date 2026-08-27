@@ -11,14 +11,16 @@ import (
 
 // PrimeChatRoom Prime Chat 房间信息
 type PrimeChatRoom struct {
-	ChatRoomId               string
-	TalentUserId             string
-	TalentUniqueId           string
-	TalentDisplayName        string
-	TalentAvatarUrl          string
-	MemberUserId             string
-	MemberBackgroundImageUrl string
-	MemberProfileImageUrl    string
+	ChatRoomId                string
+	TalentUserId              string
+	TalentUniqueId            string
+	TalentDisplayName         string
+	TalentAvatarUrl           string
+	MemberUserId              string
+	MemberBackgroundImageUrl  string
+	MemberProfileImageUrl     string
+	TalentLastCheckTimeMillis int64
+	MemberLastCheckTimeMillis int64
 }
 
 const (
@@ -72,8 +74,6 @@ func ListPrimeChatRooms() ([]*PrimeChatRoom, error) {
 	if len(respBuf) == 0 {
 		return nil, nil
 	}
-
-	DumpRawResponse("ListPrimeChatRooms", respBuf)
 
 	// 解析响应：ListPrimeChatRoomsResponse { prime_chat_rooms = 1: repeated PrimeChatRoom { ... } }
 	var rooms []*PrimeChatRoom
@@ -505,6 +505,21 @@ func parsePrimeChatRoom(b []byte, room *PrimeChatRoom) {
 			room.MemberBackgroundImageUrl = string(v)
 			b = b[n2:]
 
+		case num == 100:
+			value, n2 := parsePrimeChatCreateTime(typ, b)
+			if n2 < 0 {
+				return
+			}
+			room.TalentLastCheckTimeMillis = value
+			b = b[n2:]
+
+		case num == 101:
+			value, n2 := parsePrimeChatCreateTime(typ, b)
+			if n2 < 0 {
+				return
+			}
+			room.MemberLastCheckTimeMillis = value
+			b = b[n2:]
 		default:
 			n2 := protowire.ConsumeFieldValue(num, typ, b)
 			if n2 < 0 {
@@ -576,116 +591,11 @@ func parseUserProfile(b []byte, room *PrimeChatRoom) {
 	}
 }
 
-// DumpRawResponse 输出响应中所有 protobuf 字段，用于诊断
+// DumpRawResponse 输出响应概要，避免正常运行时打印完整 protobuf 内容。
 func DumpRawResponse(tag string, respBuf []byte) {
 	if len(respBuf) == 0 {
 		hlog.Infof("%s: empty response", tag)
 		return
 	}
-	var lines []string
-	lines = append(lines, fmt.Sprintf("=== %s raw response (%d bytes) ===", tag, len(respBuf)))
-	b := respBuf
-	for len(b) > 0 {
-		num, typ, n := protowire.ConsumeTag(b)
-		if n < 0 {
-			break
-		}
-		b = b[n:]
-		if typ == protowire.BytesType {
-			v, n2 := protowire.ConsumeBytes(b)
-			if n2 < 0 {
-				break
-			}
-			b = b[n2:]
-			if num == 1 && len(v) > 0 && v[0] != 0 {
-				subLines := dumpSubFields(v, "  ")
-				lines = append(lines, fmt.Sprintf("  field %d (BytesType): nested {", num))
-				lines = append(lines, subLines...)
-				lines = append(lines, "  }")
-			} else {
-				lines = append(lines, fmt.Sprintf("  field %d (BytesType): len=%d value=%q", num, len(v), truncateString(string(v), 100)))
-			}
-		} else if typ == protowire.VarintType {
-			v, n2 := protowire.ConsumeVarint(b)
-			if n2 < 0 {
-				break
-			}
-			b = b[n2:]
-			lines = append(lines, fmt.Sprintf("  field %d (VarintType): %d", num, v))
-		} else if typ == protowire.Fixed32Type {
-			v, n2 := protowire.ConsumeFixed32(b)
-			if n2 < 0 {
-				break
-			}
-			b = b[n2:]
-			lines = append(lines, fmt.Sprintf("  field %d (Fixed32Type): %d", num, v))
-		} else if typ == protowire.Fixed64Type {
-			v, n2 := protowire.ConsumeFixed64(b)
-			if n2 < 0 {
-				break
-			}
-			b = b[n2:]
-			lines = append(lines, fmt.Sprintf("  field %d (Fixed64Type): %d", num, v))
-		} else {
-			n2 := protowire.ConsumeFieldValue(num, typ, b)
-			if n2 < 0 {
-				break
-			}
-			b = b[n2:]
-			lines = append(lines, fmt.Sprintf("  field %d (typ=%d): (skipped)", num, typ))
-		}
-	}
-	lines = append(lines, "=== end ===")
-	hlog.Infof(strings.Join(lines, "\n"))
-}
-
-func dumpSubFields(b []byte, indent string) []string {
-	var lines []string
-	for len(b) > 0 {
-		num, typ, n := protowire.ConsumeTag(b)
-		if n < 0 {
-			break
-		}
-		b = b[n:]
-		if typ == protowire.BytesType {
-			v, n2 := protowire.ConsumeBytes(b)
-			if n2 < 0 {
-				break
-			}
-			b = b[n2:]
-			lines = append(lines, fmt.Sprintf("%sfield %d (BytesType): len=%d value=%q", indent, num, len(v), truncateString(string(v), 100)))
-		} else if typ == protowire.VarintType {
-			v, n2 := protowire.ConsumeVarint(b)
-			if n2 < 0 {
-				break
-			}
-			b = b[n2:]
-			lines = append(lines, fmt.Sprintf("%sfield %d (VarintType): %d", indent, num, v))
-		} else if typ == protowire.Fixed32Type {
-			v, n2 := protowire.ConsumeFixed32(b)
-			if n2 < 0 {
-				break
-			}
-			b = b[n2:]
-			lines = append(lines, fmt.Sprintf("%sfield %d (Fixed32Type): %d", indent, num, v))
-		} else {
-			n2 := protowire.ConsumeFieldValue(num, typ, b)
-			if n2 < 0 {
-				break
-			}
-			b = b[n2:]
-			lines = append(lines, fmt.Sprintf("%sfield %d (typ=%d): (skipped)", indent, num, typ))
-		}
-	}
-	if len(lines) == 0 {
-		lines = append(lines, fmt.Sprintf("%s(empty or primitive)", indent))
-	}
-	return lines
-}
-
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
+	hlog.Infof("%s response received: %d bytes", tag, len(respBuf))
 }

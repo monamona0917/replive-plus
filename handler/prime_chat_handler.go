@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"replive/dal"
+	"replive/utils"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,18 +18,21 @@ import (
 // Prime Chat is intentionally served from a separate local API surface. It
 // never shares the Fandom room or message queries.
 type PrimeChatRoomDTO struct {
-	Id                       int64  `json:"id"`
-	ChatRoomId               string `json:"chat_room_id"`
-	TalentUserId             string `json:"talent_user_id"`
-	TalentUniqueId           string `json:"talent_unique_id"`
-	TalentDisplayName        string `json:"talent_display_name"`
-	TalentAvatarUrl          string `json:"talent_avatar_url"`
-	MemberUserId             string `json:"member_user_id"`
-	MemberBackgroundImageUrl string `json:"member_background_image_url"`
-	SyncedAt                 int64  `json:"synced_at"`
-	LastMessageTime          int64  `json:"last_message_time"`
-	LastMessageContent       string `json:"last_message_content"`
-	LastMessageType          string `json:"last_message_type"`
+	Id                        int64  `json:"id"`
+	ChatRoomId                string `json:"chat_room_id"`
+	TalentUserId              string `json:"talent_user_id"`
+	TalentUniqueId            string `json:"talent_unique_id"`
+	TalentDisplayName         string `json:"talent_display_name"`
+	TalentAvatarUrl           string `json:"talent_avatar_url"`
+	TalentAvatarLocalURL      string `json:"talent_avatar_local_url,omitempty"`
+	MemberUserId              string `json:"member_user_id"`
+	MemberBackgroundImageUrl  string `json:"member_background_image_url"`
+	TalentLastCheckTimeMillis int64  `json:"talent_last_check_time_ms"`
+	MemberLastCheckTimeMillis int64  `json:"member_last_check_time_ms"`
+	SyncedAt                  int64  `json:"synced_at"`
+	LastMessageTime           int64  `json:"last_message_time"`
+	LastMessageContent        string `json:"last_message_content"`
+	LastMessageType           string `json:"last_message_type"`
 }
 
 type PrimeChatMessageDTO struct {
@@ -160,27 +165,24 @@ func HandleGetPrimeChatDates(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	type dateRow struct {
-		DateKey string `gorm:"column:date_key"`
-	}
-	rows := make([]dateRow, 0)
+	var createTimes []int64
 	err = primeBaseMessageQuery(chatRoomID, "").
 		Where("create_unix_time_ms > 0").
-		Select("strftime('%Y-%m-%d', create_unix_time_ms / 1000, 'unixepoch', 'localtime') AS date_key").
-		Group("date_key").
-		Order("date_key ASC").
-		Scan(&rows).Error
+		Pluck("create_unix_time_ms", &createTimes).Error
 	if err != nil {
 		c.JSON(consts.StatusOK, BadResp(err.Error()))
 		return
 	}
 
-	dates := make([]string, 0, len(rows))
-	for _, row := range rows {
-		if row.DateKey != "" {
-			dates = append(dates, row.DateKey)
-		}
+	dateSet := make(map[string]struct{}, len(createTimes))
+	for _, createTime := range createTimes {
+		dateSet[time.UnixMilli(createTime).In(utils.LocalLocation()).Format("2006-01-02")] = struct{}{}
 	}
+	dates := make([]string, 0, len(dateSet))
+	for dateKey := range dateSet {
+		dates = append(dates, dateKey)
+	}
+	sort.Strings(dates)
 	c.JSON(consts.StatusOK, &Resp{Data: dates})
 }
 
@@ -281,7 +283,7 @@ func emptyPrimeMessagesResp() *GetPrimeChatMessagesResp {
 }
 
 func findFirstPrimeMessageIDByDate(chatRoomID, bodyType, date string) (int64, error) {
-	start, err := time.ParseInLocation("2006-01-02", date, time.Local)
+	start, err := time.ParseInLocation("2006-01-02", date, utils.LocalLocation())
 	if err != nil {
 		return 0, fmt.Errorf("invalid date %q; expected yyyy-MM-dd: %w", date, err)
 	}
@@ -327,17 +329,65 @@ func queryPrimeChatMessages(chatRoomID, bodyType string, cursorID, anchorID int6
 		if err != nil || anchor == nil {
 			return []dal.PrimeChatMessage{}, false, false, err
 		}
-		messages := make([]dal.PrimeChatMessage, 0, limit)
-		query := primeAtOrAfter(primeBaseMessageQuery(chatRoomID, bodyType), *anchor)
-		if err := query.Order("create_unix_time_ms ASC, id ASC").Limit(limit).Find(&messages).Error; err != nil {
+		// 保证至少为 anchor 自身预留 1 条配额，前半段最多取 (pageSize - 1) / 2 条
+		targetTotal := int(pageSize)
+		if targetTotal < 1 {
+			targetTotal = 1
+		}
+		halfBefore := (targetTotal - 1) / 2
+
+		// 1. 取 anchor 前面的消息（按倒序查出再翻转）
+		beforeMsgs := make([]dal.PrimeChatMessage, 0, halfBefore)
+		if halfBefore > 0 {
+			if err := primeBefore(primeBaseMessageQuery(chatRoomID, bodyType), *anchor).Order("create_unix_time_ms DESC, id DESC").Limit(halfBefore).Find(&beforeMsgs).Error; err != nil {
+				return nil, false, false, err
+			}
+			reversePrimeMessages(beforeMsgs)
+		}
+
+		// 2. 取 anchor 及之后的消息（保证 neededAfter >= 1，必定包含 anchor 自己）
+		neededAfter := targetTotal - len(beforeMsgs)
+		if neededAfter < 1 {
+			neededAfter = 1
+		}
+		atOrAfterMsgs := make([]dal.PrimeChatMessage, 0, neededAfter+1)
+		if err := primeAtOrAfter(primeBaseMessageQuery(chatRoomID, bodyType), *anchor).Order("create_unix_time_ms ASC, id ASC").Limit(neededAfter + 1).Find(&atOrAfterMsgs).Error; err != nil {
 			return nil, false, false, err
 		}
-		hasNewer := len(messages) > int(pageSize)
+		hasNewer := len(atOrAfterMsgs) > neededAfter
 		if hasNewer {
-			messages = messages[:pageSize]
+			atOrAfterMsgs = atOrAfterMsgs[:neededAfter]
 		}
+
+		// 3. 若向后不够，且向前有更多记录，向前多取补足至 targetTotal
+		if len(beforeMsgs)+len(atOrAfterMsgs) < targetTotal {
+			missing := targetTotal - (len(beforeMsgs) + len(atOrAfterMsgs))
+			oldestAnchor := *anchor
+			if len(beforeMsgs) > 0 {
+				oldestAnchor = beforeMsgs[0]
+			}
+			extraBefore := make([]dal.PrimeChatMessage, 0, missing)
+			if err := primeBefore(primeBaseMessageQuery(chatRoomID, bodyType), oldestAnchor).Order("create_unix_time_ms DESC, id DESC").Limit(missing).Find(&extraBefore).Error; err != nil {
+				return nil, false, false, err
+			}
+			if len(extraBefore) > 0 {
+				reversePrimeMessages(extraBefore)
+				beforeMsgs = append(extraBefore, beforeMsgs...)
+			}
+		}
+
+		messages := append(beforeMsgs, atOrAfterMsgs...)
 		hasOlder, err := hasPrimeMessageBefore(chatRoomID, bodyType, firstPrimeMessage(messages))
-		return messages, hasOlder, hasNewer, err
+		if err != nil {
+			return nil, false, false, err
+		}
+		if !hasNewer {
+			hasNewer, err = hasPrimeMessageAfter(chatRoomID, bodyType, lastPrimeMessage(messages))
+			if err != nil {
+				return nil, false, false, err
+			}
+		}
+		return messages, hasOlder, hasNewer, nil
 	}
 
 	query := primeBaseMessageQuery(chatRoomID, bodyType)
@@ -449,18 +499,21 @@ func buildPrimeChatMessageResp(messages []dal.PrimeChatMessage) ([]*PrimeChatMes
 
 func primeChatRoomDTO(room *dal.PrimeChatRoom) *PrimeChatRoomDTO {
 	return &PrimeChatRoomDTO{
-		Id:                       room.Id,
-		ChatRoomId:               room.ChatRoomId,
-		TalentUserId:             room.TalentUserId,
-		TalentUniqueId:           room.TalentUniqueId,
-		TalentDisplayName:        room.TalentDisplayName,
-		TalentAvatarUrl:          room.TalentAvatarUrl,
-		MemberUserId:             room.MemberUserId,
-		MemberBackgroundImageUrl: room.MemberBackgroundImageUrl,
-		SyncedAt:                 room.SyncedAt,
-		LastMessageTime:          room.LastMessageTime,
-		LastMessageContent:       room.LastMessageContent,
-		LastMessageType:          room.LastMessageType,
+		Id:                        room.Id,
+		ChatRoomId:                room.ChatRoomId,
+		TalentUserId:              room.TalentUserId,
+		TalentUniqueId:            room.TalentUniqueId,
+		TalentDisplayName:         room.TalentDisplayName,
+		TalentAvatarUrl:           room.TalentAvatarUrl,
+		TalentAvatarLocalURL:      localProfileMediaURL(room.TalentAvatarPath),
+		MemberUserId:              room.MemberUserId,
+		MemberBackgroundImageUrl:  room.MemberBackgroundImageUrl,
+		TalentLastCheckTimeMillis: room.TalentLastCheckTimeMillis,
+		MemberLastCheckTimeMillis: room.MemberLastCheckTimeMillis,
+		SyncedAt:                  room.SyncedAt,
+		LastMessageTime:           room.LastMessageTime,
+		LastMessageContent:        room.LastMessageContent,
+		LastMessageType:           room.LastMessageType,
 	}
 }
 

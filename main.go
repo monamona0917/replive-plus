@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
 	"replive/config"
 	"replive/dal"
@@ -75,13 +76,22 @@ func runMain() (exitCode int) {
 	})
 	defer rep_api.SetAuthFailureHandler(nil)
 
-	Init(appOptions{
+	onlineMode := Init(appOptions{
 		ConfigPath: configPath,
 	})
 
-	h := server.Default()
+	h := server.Default(server.WithHostPorts("127.0.0.1:8888"))
 
-	service.Init()
+	if onlineMode {
+		startupSummary, err := service.Init()
+		if err != nil {
+			rep_api.SetOnline(false)
+			logOfflineMode(err)
+		} else {
+			service.LogStartupSummary(startupSummary)
+			service.StartBackgroundWorkers()
+		}
+	}
 
 	registerRoutes(h)
 	go h.Spin()
@@ -91,13 +101,15 @@ func runMain() (exitCode int) {
 	for {
 		select {
 		case err := <-authFailureCh:
-			panic(fmt.Errorf("认证已失效：%v。已清空本地 refresh_token，请重新打开程序完成登录", err))
+			rep_api.SetOnline(false)
+			logOfflineMode(err)
 		case <-ticker.C:
-			hlog.Infof("listening...")
+			if rand.IntN(100) < 10 {
+				hlog.Infof("正常运行中(:3_ヽ)_")
+			}
 		}
 	}
 
-	//ffmpeg -i "rtmp://lvplay.rep_api.com/rep_api/4e20d62f-47da-4dca-8364-6e2cd3574f28?txSecret=e415ac573fd7d4e274d575584c0b52a842f6a09e44a9ccf2128eb1f97db29ffd&txTime=6A7735BD" -c copy ..\..\output.ts
 }
 
 func logPanic(recovered any) {
@@ -116,7 +128,7 @@ func waitBeforeExit() {
 	_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
 }
 
-func Init(options appOptions) {
+func Init(options appOptions) bool {
 	if err := config.EnsureConfig(options.ConfigPath); err != nil {
 		panic(err)
 	}
@@ -129,15 +141,21 @@ func Init(options appOptions) {
 	if err := ensureLoginReady(options); err != nil {
 		panic(err)
 	}
-	if err := initRepAPI(options); err != nil {
-		panic(err)
-	}
 	if err := dal.InitDB(); err != nil {
 		panic(err)
+	}
+	if err := service.BackfillProfileMediaPaths(); err != nil {
+		hlog.Errorf("backfill local profile media paths failed: %v", err)
+	}
+	if err := initRepAPI(options); err != nil {
+		rep_api.SetOnline(false)
+		logOfflineMode(err)
+		return false
 	}
 	if err := service.BackfillChatMediaPaths(); err != nil {
 		hlog.Errorf("backfill local Fandom media paths failed: %v", err)
 	}
+	return true
 }
 
 func ensureLoginSetup(options appOptions) error {
@@ -171,27 +189,17 @@ func ensureLoginReady(options appOptions) error {
 }
 
 func initRepAPI(options appOptions) error {
-	if err := rep_api.InitHttp(); err != nil {
-		if config.IsGoogleLoginProvider() {
-			hlog.Warnf("rep_api init failed, retrying Google login: %v", err)
-			if loginErr := runGoogleLogin(options); loginErr != nil {
-				return fmt.Errorf("rep_api init failed: %v; google login failed: %v", err, loginErr)
-			}
-			return rep_api.InitHttp()
-		}
-		if config.IsTwitterLoginProvider() {
-			if !rep_api.IsUnauthorizedError(err) {
-				return err
-			}
-			hlog.Warnf("rep_api init failed, retrying Twitter login: %v", err)
-			if loginErr := runTwitterLogin(options); loginErr != nil {
-				return fmt.Errorf("rep_api init failed: %v; twitter login failed: %v", err, loginErr)
-			}
-			return rep_api.InitHttp()
-		}
-		return err
+	_ = options
+	return rep_api.InitHttp()
+}
+
+func logOfflineMode(err error) {
+	if rep_api.IsUnauthorizedError(err) {
+		hlog.Errorf("无法连接 Replive 服务器：认证失效，refresh_token 可能已过期或无效。")
+	} else {
+		hlog.Errorf("无法连接 Replive 服务器，可能原因：本地网络异常、代理配置错误或服务器不可用。")
 	}
-	return nil
+	hlog.Infof("将以离线模式运行，仅浏览本地聊天记录。")
 }
 
 func runGoogleLogin(options appOptions) error {
@@ -215,6 +223,7 @@ func registerRoutes(h *server.Hertz) {
 
 	// Fandom 本地媒体访问：按消息 ID 映射，前端会在本地文件不可用时回退远程 URL。
 	h.GET("/media/:file", handler.HandleGetChatMedia)
+	h.GET("/profile-media", handler.HandleGetProfileMedia)
 
 	chatGroup := h.Group("/api/chat")
 	{
@@ -232,11 +241,5 @@ func registerRoutes(h *server.Hertz) {
 		primeGroup.GET("/search", handler.HandleSearchPrimeChatMessages)
 	}
 	h.GET("/api/user/me", handler.HandleGetCurrentUser)
-	h.GET("/api/translate", handler.HandleTranslate)
-
-	videoGroup := h.Group("/api/video")
-	{
-		videoGroup.GET("/download", handler.HandleDownloadVideo)
-	}
 
 }

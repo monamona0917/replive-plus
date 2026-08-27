@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { SettingsState, ThemeMode, WatermarkConfig } from "../types/settings";
 
 const STORAGE_KEY = "replive_plus_settings";
+const RENAMED_STORAGE_KEY = "nsy_chat_live_plus_settings";
 
 interface PersistedSettings {
   theme: ThemeMode;
@@ -25,9 +26,20 @@ const DEFAULT_SETTINGS: PersistedSettings = {
 
 function loadSettings(): PersistedSettings {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const currentRaw = localStorage.getItem(STORAGE_KEY);
+    const renamedRaw =
+      currentRaw === null ? localStorage.getItem(RENAMED_STORAGE_KEY) : null;
+    const raw = currentRaw ?? renamedRaw;
     if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw);
+    if (renamedRaw !== null) {
+      try {
+        localStorage.setItem(STORAGE_KEY, raw);
+        localStorage.removeItem(RENAMED_STORAGE_KEY);
+      } catch {
+        // 当前会话仍可使用旧设置；下次保存会再次写入 Replive+ 的键。
+      }
+    }
     const theme: ThemeMode = parsed.theme === "light" ? "light" : "dark";
     return {
       theme,

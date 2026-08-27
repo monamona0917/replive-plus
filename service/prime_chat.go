@@ -7,19 +7,42 @@ import (
 	"replive/dal"
 	"replive/rep_api"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/common/hlog"
 )
 
 const (
-	primeChatFollowingPageSize = 20
-	primeChatFollowingMaxPages = 50
+	primeChatFollowingPageSize    = 20
+	primeChatFollowingMaxPages    = 50
+	primeChatRoomQueryConcurrency = 5
 )
+
+type primeChatFollowedUser struct {
+	userID string
+	label  string
+}
+
+type primeChatRoomQueryResult struct {
+	room *rep_api.PrimeChatRoom
+	err  error
+}
+
+type PrimeChatStartupSummary struct {
+	Rooms           int
+	BackgroundMedia MediaSyncSummary
+}
 
 // syncPrimeChatAtStartup performs the single read-only Prime Chat sync for a
 // backend process. It is deliberately not registered as a periodic worker.
 func syncPrimeChatAtStartup() error {
+	_, err := syncPrimeChatAtStartupWithSummary()
+	return err
+}
+
+func syncPrimeChatAtStartupWithSummary() (PrimeChatStartupSummary, error) {
+	summary := PrimeChatStartupSummary{}
 	now := time.Now()
 	rooms, listErr := rep_api.ListPrimeChatRooms()
 	if listErr != nil {
@@ -32,7 +55,7 @@ func syncPrimeChatAtStartup() error {
 	followedRooms, followingErr := findPrimeChatRoomsForFollowedUsers()
 	if followingErr != nil {
 		if listErr != nil || len(rooms) == 0 {
-			return fmt.Errorf("discover Prime Chat rooms from followed users: %w", followingErr)
+			return summary, fmt.Errorf("discover Prime Chat rooms from followed users: %w", followingErr)
 		}
 		hlog.Warnf("followed-user Prime Chat discovery failed; using listed rooms only: %v", followingErr)
 	} else {
@@ -43,21 +66,22 @@ func syncPrimeChatAtStartup() error {
 		hlog.Infof("Prime Chat startup room sync found no available rooms")
 	}
 
-	if err := processPrimeChatRooms(rooms, now); err != nil {
-		return err
+	summary.Rooms = len(rooms)
+	backgroundSummary, err := processPrimeChatRooms(rooms, now)
+	if err != nil {
+		return summary, err
 	}
-	return syncPrimeChatMessages()
+	summary.BackgroundMedia = backgroundSummary
+	if err := syncPrimeChatMessages(); err != nil {
+		return summary, err
+	}
+	return summary, nil
 }
 
 // findPrimeChatRoomsForFollowedUsers discovers enabled Prime Chat rooms from
 // the current follow list. It is called only once during backend startup.
 func findPrimeChatRoomsForFollowedUsers() ([]*rep_api.PrimeChatRoom, error) {
-	type candidate struct {
-		userID string
-		label  string
-	}
-
-	candidates := make([]candidate, 0)
+	candidates := make([]primeChatFollowedUser, 0)
 	seenUsers := make(map[string]struct{})
 	pageToken := ""
 
@@ -83,7 +107,7 @@ func findPrimeChatRoomsForFollowedUsers() ([]*rep_api.PrimeChatRoom, error) {
 				continue
 			}
 			seenUsers[userID] = struct{}{}
-			candidates = append(candidates, candidate{
+			candidates = append(candidates, primeChatFollowedUser{
 				userID: userID,
 				label:  firstNonEmpty(user.GetDisplayName(), user.GetUniqueId(), userID),
 			})
@@ -96,14 +120,10 @@ func findPrimeChatRoomsForFollowedUsers() ([]*rep_api.PrimeChatRoom, error) {
 		pageToken = nextPageToken
 	}
 
-	rooms := make([]*rep_api.PrimeChatRoom, 0, len(candidates))
+	rooms := queryPrimeChatRooms(candidates, rep_api.GetPrimeChatRoom)
 	seenRooms := make(map[string]struct{})
-	for _, candidate := range candidates {
-		primeRoom, err := rep_api.GetPrimeChatRoom(candidate.userID)
-		if err != nil {
-			hlog.Debugf("GetPrimeChatRoom fallback skipped %s: %v", candidate.label, err)
-			continue
-		}
+	usableRooms := make([]*rep_api.PrimeChatRoom, 0, len(rooms))
+	for _, primeRoom := range rooms {
 		if !isUsablePrimeChatRoom(primeRoom) {
 			continue
 		}
@@ -111,11 +131,53 @@ func findPrimeChatRoomsForFollowedUsers() ([]*rep_api.PrimeChatRoom, error) {
 			continue
 		}
 		seenRooms[primeRoom.ChatRoomId] = struct{}{}
-		rooms = append(rooms, primeRoom)
+		usableRooms = append(usableRooms, primeRoom)
 	}
 
-	hlog.Infof("Prime Chat followed-user discovery done: candidates=%d rooms=%d", len(candidates), len(rooms))
-	return rooms, nil
+	hlog.Infof("Prime Chat followed-user discovery done: candidates=%d rooms=%d", len(candidates), len(usableRooms))
+	return usableRooms, nil
+}
+
+func queryPrimeChatRooms(candidates []primeChatFollowedUser, getRoom func(string) (*rep_api.PrimeChatRoom, error)) []*rep_api.PrimeChatRoom {
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	workerCount := primeChatRoomQueryConcurrency
+	if workerCount > len(candidates) {
+		workerCount = len(candidates)
+	}
+	jobs := make(chan int)
+	results := make([]primeChatRoomQueryResult, len(candidates))
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for worker := 0; worker < workerCount; worker++ {
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				room, err := getRoom(candidates[index].userID)
+				results[index] = primeChatRoomQueryResult{room: room, err: err}
+			}
+		}()
+	}
+
+	for index := range candidates {
+		jobs <- index
+	}
+	close(jobs)
+	workers.Wait()
+
+	rooms := make([]*rep_api.PrimeChatRoom, 0, len(candidates))
+	for index, result := range results {
+		if result.err != nil {
+			hlog.Debugf("GetPrimeChatRoom fallback skipped %s: %v", candidates[index].label, result.err)
+			continue
+		}
+		if result.room != nil {
+			rooms = append(rooms, result.room)
+		}
+	}
+	return rooms
 }
 
 func mergePrimeChatRooms(groups ...[]*rep_api.PrimeChatRoom) []*rep_api.PrimeChatRoom {
@@ -140,24 +202,46 @@ func isUsablePrimeChatRoom(room *rep_api.PrimeChatRoom) bool {
 	return room != nil && strings.TrimSpace(room.ChatRoomId) != "" && strings.TrimSpace(room.TalentUserId) != ""
 }
 
-func processPrimeChatRooms(rooms []*rep_api.PrimeChatRoom, now time.Time) error {
+func processPrimeChatRooms(rooms []*rep_api.PrimeChatRoom, now time.Time) (mediaSummary MediaSyncSummary, err error) {
 	dbRooms := make([]*dal.PrimeChatRoom, 0, len(rooms))
-	downloaded := 0
+	defer func() {
+		logMediaSyncSummary("Prime Chat background media sync", mediaSummary)
+	}()
 
 	for _, room := range rooms {
 		if !isUsablePrimeChatRoom(room) {
 			continue
 		}
+		avatarPath := ""
+		if existing, lookupErr := dal.GetPrimeChatRoomByChatRoomID(room.ChatRoomId); lookupErr == nil && existing != nil && existing.TalentAvatarUrl == room.TalentAvatarUrl {
+			avatarPath = existing.TalentAvatarPath
+		}
+		if strings.TrimSpace(room.TalentAvatarUrl) != "" {
+			path, _, downloadErr := downloadProfileMediaPath(
+				firstNonEmpty(room.TalentDisplayName, room.TalentUniqueId, room.TalentUserId),
+				room.TalentAvatarUrl,
+				now,
+				"prime_chat_avatar",
+			)
+			if downloadErr != nil {
+				hlog.Warnf("download Prime Chat avatar failed, chatRoomId=%s: %v", room.ChatRoomId, downloadErr)
+			} else {
+				avatarPath = path
+			}
+		}
 
 		dbRooms = append(dbRooms, &dal.PrimeChatRoom{
-			ChatRoomId:               room.ChatRoomId,
-			TalentUserId:             room.TalentUserId,
-			TalentUniqueId:           room.TalentUniqueId,
-			TalentDisplayName:        room.TalentDisplayName,
-			TalentAvatarUrl:          room.TalentAvatarUrl,
-			MemberUserId:             room.MemberUserId,
-			MemberBackgroundImageUrl: room.MemberBackgroundImageUrl,
-			SyncedAt:                 now.Unix(),
+			ChatRoomId:                room.ChatRoomId,
+			TalentUserId:              room.TalentUserId,
+			TalentUniqueId:            room.TalentUniqueId,
+			TalentDisplayName:         room.TalentDisplayName,
+			TalentAvatarUrl:           room.TalentAvatarUrl,
+			TalentAvatarPath:          avatarPath,
+			MemberUserId:              room.MemberUserId,
+			MemberBackgroundImageUrl:  room.MemberBackgroundImageUrl,
+			TalentLastCheckTimeMillis: room.TalentLastCheckTimeMillis,
+			MemberLastCheckTimeMillis: room.MemberLastCheckTimeMillis,
+			SyncedAt:                  now.Unix(),
 		})
 
 		url := strings.TrimSpace(room.MemberBackgroundImageUrl)
@@ -166,18 +250,19 @@ func processPrimeChatRooms(rooms []*rep_api.PrimeChatRoom, now time.Time) error 
 		}
 		owner := firstNonEmpty(room.TalentDisplayName, room.TalentUniqueId, room.TalentUserId, "unknown")
 		prefix := filepath.Join(config.GetMediaPath(), "profile")
-		if _, err := DownloadProfileMedia(url, now, prefix, owner, "prime_chat_background"); err != nil {
+		if _, result, err := DownloadProfileMediaWithResult(url, now, prefix, owner, "prime_chat_background"); err != nil {
+			mediaSummary.Add(MediaFailed)
 			hlog.Warnf("download Prime Chat background for %s: %v", owner, err)
 		} else {
-			downloaded++
+			mediaSummary.Add(result)
 		}
 	}
 
 	if err := dal.SavePrimeChatRooms(dbRooms); err != nil {
-		return fmt.Errorf("save Prime Chat rooms: %w", err)
+		return mediaSummary, fmt.Errorf("save Prime Chat rooms: %w", err)
 	}
-	hlog.Infof("Prime Chat startup room sync done: rooms=%d backgrounds=%d", len(dbRooms), downloaded)
-	return nil
+	hlog.Infof("Prime Chat startup room sync done: rooms=%d backgrounds_downloaded=%d backgrounds_skipped=%d backgrounds_failed=%d", len(dbRooms), mediaSummary.Downloaded, mediaSummary.Skipped, mediaSummary.Failed)
+	return mediaSummary, nil
 }
 
 // syncPrimeChatMessages walks every page once at startup. The server orders

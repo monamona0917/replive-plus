@@ -1,10 +1,12 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"replive/config"
 	"replive/utils"
 	"strings"
@@ -15,129 +17,175 @@ import (
 )
 
 var ffmpegPath string
+var ffmpegPathAvailable bool
+var ffmpegPathFailure string
 var ffmpegWatcherOnce sync.Once
 
+const maxFfmpegResumeAttempts = 3
+
+type ffmpegStartFailure struct {
+	message string
+}
+
+func (e *ffmpegStartFailure) Error() string {
+	return e.message
+}
+
 func initFfmpeg() {
-	if _, err := os.Stat(config.Conf.FfmpegPath); err == nil {
-		ffmpegPath = config.Conf.FfmpegPath
-	} else if _, err := os.Stat("./ffmpeg.exe"); err == nil {
+	configuredPath := strings.TrimSpace(config.Conf.FfmpegPath)
+	if configuredPath != "" {
+		info, err := os.Stat(configuredPath)
+		if err == nil && !info.IsDir() {
+			ffmpegPath = configuredPath
+			ffmpegPathAvailable = true
+			return
+		}
+		ffmpegPathFailure = "ffmpeg 启动失败，请在 config.yaml 中配置正确路径后重启后端"
+		return
+	}
+	if _, err := os.Stat("./ffmpeg.exe"); err == nil {
 		ffmpegPath = "./ffmpeg.exe"
+		ffmpegPathAvailable = true
 	} else if _, err := os.Stat("./ffmpeg"); err == nil {
 		ffmpegPath = "./ffmpeg"
+		ffmpegPathAvailable = true
 	} else {
 		if utils.IsWindows() {
 			ffmpegPath = "ffmpeg.exe"
 		} else {
 			ffmpegPath = "ffmpeg"
 		}
+		if _, err := exec.LookPath(ffmpegPath); err == nil {
+			ffmpegPathAvailable = true
+		} else {
+			ffmpegPathFailure = "ffmpeg 启动失败，请在 config.yaml 中配置正确路径后重启后端"
+		}
 	}
 }
 
 func startFfmpegWatcher() {
-	liveRecordChannel = make(chan *NsyLiveInfo, 1000)
 	ffmpegWatcherOnce.Do(func() {
+		liveRecordChannel = make(chan *NsyLiveInfo, 1000)
 		initFfmpeg()
-		hlog.Infof("ffmpeg path: %s, Starting ffmpeg watcher...", ffmpegPath)
 		go func() {
 			for nsyLiveInfo := range liveRecordChannel {
-				hlog.Info("start, receive")
 				if err := startFfmpegRecord(nsyLiveInfo); err != nil {
-					hlog.Errorf("Error starting ffmpeg record: %v", err)
-					go func(info *NsyLiveInfo) {
-						time.Sleep(5 * time.Second)
-						if err := enqueueLiveRecord(info); err != nil {
-							hlog.Errorf("Error requeueing ffmpeg record: %v", err)
-						}
-					}(nsyLiveInfo)
+					logFfmpegStartFailure(err)
 				}
 			}
 		}()
 	})
 }
 
+var ffmpegFailureLogOnce sync.Once
+
+func logFfmpegStartFailure(err error) {
+	ffmpegFailureLogOnce.Do(func() {
+		if ffmpegPathFailure != "" {
+			hlog.Errorf("%s", ffmpegPathFailure)
+			return
+		}
+		var startFailure *ffmpegStartFailure
+		if errors.As(err, &startFailure) {
+			hlog.Errorf("%s", startFailure.message)
+			return
+		}
+		hlog.Errorf("ffmpeg 启动失败，请检查录像目录、文件权限和本地运行环境")
+	})
+}
+
 func startFfmpegRecord(nsyLiveInfo *NsyLiveInfo) error {
 	defer func() {
 		if r := recover(); r != nil {
-			hlog.Errorf("Recovered in ffmpeg record: %v", r)
+			hlog.Errorf("ffmpeg 录像任务发生异常，请检查本地环境")
 		}
 	}()
+	if nsyLiveInfo == nil {
+		return &ffmpegStartFailure{message: "ffmpeg 启动失败，请检查录像任务配置"}
+	}
+	if !ffmpegPathAvailable {
+		return &ffmpegStartFailure{message: ffmpegPathFailure}
+	}
 	baseName := nsyLiveInfo.RecordBaseName
 	if baseName == "" {
 		baseName = fmt.Sprintf("%s_%s", nsyLiveInfo.Name, time.Now().Format("200601021504"))
 	}
-	outputFile := baseName + ".mp4"
+	outputName := baseName + ".mp4"
 	if nsyLiveInfo.SegmentIndex > 1 {
-		outputFile = fmt.Sprintf("%s_part%02d.mp4", baseName, nsyLiveInfo.SegmentIndex)
+		outputName = fmt.Sprintf("%s_part%02d.mp4", baseName, nsyLiveInfo.SegmentIndex)
+	}
+	path := config.GetLiveMonthPath(time.Now())
+	if len(path) > 0 {
+		_ = os.MkdirAll(path, 0755)
+	}
+	outputFile := filepath.Join(path, outputName)
+	if path == "" {
+		outputFile = outputName
 	}
 	for i := 1; i < 100; i++ {
 		if _, err := os.Stat(outputFile); err == nil {
-			hlog.Warnf("file %s already exist? err: %v, try %d", outputFile, err, i)
 			outputFile = fmt.Sprintf("%s_retry_%d.mp4", strings.TrimSuffix(outputFile, ".mp4"), i)
 		} else {
 			break
 		}
 	}
-	path := config.GetLiveMonthPath(time.Now())
 	logFileName := strings.TrimSuffix(outputFile, ".mp4") + ".txt"
-	if len(path) > 0 {
-		_ = os.MkdirAll(path, 0755)
-		outputFile = path + "/" + outputFile
-		logFileName = path + "/" + logFileName
-	}
 	logFile, err := os.Create(logFileName)
 	if err != nil {
-		return fmt.Errorf("创建日志文件失败: %v", err)
+		return &ffmpegStartFailure{message: "ffmpeg 启动失败，请检查录像目录、文件权限和本地运行环境"}
 	}
 	cmd := exec.Command(ffmpegPath, buildFfmpegRecordArgs(nsyLiveInfo.RtmpUrl, outputFile)...)
-	hlog.Infof("start recording by command: %s", cmd.String())
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
-		return fmt.Errorf("ffmpeg start failed: %v", err)
+		return &ffmpegStartFailure{message: "ffmpeg 启动失败，请检查录像目录、文件权限和本地运行环境"}
+	}
+	if nsyLiveInfo.ResumeAttempts > 0 {
+		hlog.Infof("重启 ffmpeg 成功，录像将会继续保存为另一个分段...")
+	} else {
+		hlog.Infof("开始录制“%s”的直播！", nsyLiveInfo.Name)
 	}
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				hlog.Errorf("Recovered in ffmpeg record: %v", r)
+				hlog.Errorf("ffmpeg 录像任务发生异常，请检查本地环境")
 			}
 		}()
 		defer logFile.Close()
-		hlog.Infof("ffmpeg 日志: %s", logFile.Name())
 
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
+		waitErr := cmd.Wait()
 
-		done := make(chan error, 1)
-		go func() { done <- cmd.Wait() }()
-
-		hlog.Infof("[%s] 录制开始:", outputFile)
-
-		for {
-			select {
-			case <-ticker.C:
-				hlog.Infof("[%s] 录制中...日志: %s", outputFile, logFile.Name())
-			case err := <-done: // 进程结束处理
-				hlog.Infof("[%s] 录制结束:", outputFile)
-				if err != nil {
-					hlog.Errorf("[%s] 录制错误: %v", outputFile, err)
-				}
-				nextInfo, stillLive, checkErr := getResumeLiveInfo(nsyLiveInfo)
-				if checkErr != nil {
-					hlog.Errorf("[%s] check live after ffmpeg exit failed: %v", outputFile, checkErr)
-					scheduleLiveResume(cloneLiveInfoForResume(nsyLiveInfo), resumeDelay(nsyLiveInfo.SegmentIndex+1))
-					return
-				}
-				if stillLive {
-					hlog.Warnf("[%s] ffmpeg exited while live still active, resume recording", outputFile)
-					scheduleLiveResume(nextInfo, resumeDelay(nextInfo.SegmentIndex))
-					return
-				}
+		if waitErr != nil {
+			hlog.Infof("直播录制意外中断，正在确认直播状态...")
+		}
+		nextInfo, stillLive, checkErr := getResumeLiveInfo(nsyLiveInfo)
+		if checkErr != nil {
+			logLiveStatusFailure(checkErr)
+			if nsyLiveInfo.ResumeAttempts < maxFfmpegResumeAttempts {
+				scheduleLiveResume(cloneLiveInfoForResume(nsyLiveInfo), resumeDelay(nsyLiveInfo.SegmentIndex+1))
+			} else {
 				knownLives.Delete(liveRecordKey(nsyLiveInfo))
-				sendLiveEndEmail(nsyLiveInfo.Name, outputFile)
+				hlog.Errorf("录制恢复失败，请检查网络、磁盘空间和本地运行环境")
+			}
+			return
+		}
+		if stillLive {
+			if waitErr == nil {
+				hlog.Infof("直播录制意外中断，正在确认直播状态...")
+			}
+			if nsyLiveInfo.ResumeAttempts >= maxFfmpegResumeAttempts {
+				knownLives.Delete(liveRecordKey(nsyLiveInfo))
+				hlog.Errorf("录制恢复失败，请检查网络、磁盘空间和本地运行环境")
 				return
 			}
+			hlog.Infof("ffmpeg 意外退出，正在尝试重新启动...")
+			scheduleLiveResume(nextInfo, resumeDelay(nextInfo.SegmentIndex))
+			return
 		}
+		knownLives.Delete(liveRecordKey(nsyLiveInfo))
+		hlog.Infof("%s的直播结束啦！", nsyLiveInfo.Name)
+		sendLiveEndEmail(nsyLiveInfo.Name, outputFile)
 	}()
 	return nil
 }

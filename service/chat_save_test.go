@@ -68,6 +68,78 @@ func TestSaveMessagePersistsProcessedMessagesWhenLaterDownloadFails(t *testing.T
 	}
 }
 
+func TestSaveMessageWithSummaryExcludesOwnMessagesFromNotification(t *testing.T) {
+	restoreCWD := chdirTemp(t)
+	defer restoreCWD()
+
+	if err := dal.InitDB(); err != nil {
+		t.Fatalf("InitDB() error = %v", err)
+	}
+
+	oldDownloadImage := downloadImage
+	oldDownloadVideo := downloadVideo
+	oldSendChatEmailFn := sendChatEmailFn
+	defer func() {
+		downloadImage = oldDownloadImage
+		downloadVideo = oldDownloadVideo
+		sendChatEmailFn = oldSendChatEmailFn
+	}()
+
+	downloadImage = func(string, time.Time, string, string) (string, error) {
+		return "talent-image.jpeg", nil
+	}
+	downloadVideo = func(string, time.Time, string, string) (string, error) {
+		return "own-video.mp4", nil
+	}
+	emailedMessageIDs := make([]string, 0)
+	sendChatEmailFn = func(msg *dal.ChatMessage) {
+		emailedMessageIDs = append(emailedMessageIDs, msg.ChatMessageId)
+	}
+
+	talentMessage := testImageMessage("talent-image", 1)
+	ownImage := testImageMessage("own-image", 2)
+	ownImage.UserProfile.DisplayName = "me"
+	ownVideo := &model.ListChatMessages{
+		UserId:        "user-1",
+		ChatRoomId:    "room-1",
+		ChatMessageId: "own-video",
+		UserProfile: &model.UserProfile{
+			DisplayName: "me",
+		},
+		Type:      int32(model.ChatMessageType_Video),
+		VideoUrl:  "https://example.com/own-video.mp4",
+		Timestamp: &model.Timestamp{Seconds: 3},
+	}
+
+	summary, err := saveMessageWithSummaryForTalent([]*model.ListChatMessages{
+		talentMessage,
+		ownImage,
+		ownVideo,
+	}, "alice")
+	if err != nil {
+		t.Fatalf("saveMessageWithSummaryForTalent() error = %v", err)
+	}
+	assertChatMessageCount(t, 3)
+	if summary.NewMessages != 1 {
+		t.Fatalf("summary.NewMessages = %d, want 1", summary.NewMessages)
+	}
+	if summary.NewImageMessages != 1 {
+		t.Fatalf("summary.NewImageMessages = %d, want 1", summary.NewImageMessages)
+	}
+	if summary.NewVideoMessages != 0 {
+		t.Fatalf("summary.NewVideoMessages = %d, want 0", summary.NewVideoMessages)
+	}
+	if got := summary.BySender["alice"].NewMessages; got != 1 {
+		t.Fatalf("alice message count = %d, want 1", got)
+	}
+	if _, ok := summary.BySender["me"]; ok {
+		t.Fatalf("own messages should not appear in summary.BySender: %#v", summary.BySender)
+	}
+	if len(emailedMessageIDs) != 1 || emailedMessageIDs[0] != "talent-image" {
+		t.Fatalf("emailed message IDs = %v, want [talent-image]", emailedMessageIDs)
+	}
+}
+
 func chdirTemp(t *testing.T) func() {
 	t.Helper()
 	oldCWD, err := os.Getwd()

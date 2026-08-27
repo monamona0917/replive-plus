@@ -1,6 +1,7 @@
 package service
 
 import (
+	"os"
 	"path/filepath"
 	"replive/config"
 	"replive/dal"
@@ -15,22 +16,56 @@ import (
 
 const profileMediaMaxPages = 50
 
-func syncChatRoomProfileMedia(room *model.ChatRoom, now time.Time) {
+func syncChatRoomProfileMedia(room *model.ChatRoom, now time.Time) MediaSyncSummary {
 	if room == nil || room.UserProfile == nil {
-		return
+		return MediaSyncSummary{}
 	}
 	profile := room.UserProfile
 	owner := firstNonEmpty(profile.GetDisplayName(), profile.GetUniqueId(), profile.GetUserId(), room.GetUserId())
 	urls := map[string]string{
 		"chat_room_avatar": profile.GetAvatarUrl(),
 	}
-	downloadProfileURLSet(owner, urls, now)
+	return downloadProfileURLSet(owner, urls, now)
+}
+
+// syncCurrentUserProfile stores the current user's display information and
+// archives the avatar so the local web UI can keep working without Replive.
+func syncCurrentUserProfile() error {
+	user, err := rep_api.GetUserPrivate()
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	if err := saveUserPrivate(user, now); err != nil {
+		return err
+	}
+	if user == nil || strings.TrimSpace(user.GetProfileImageUrl()) == "" {
+		return nil
+	}
+	path, _, downloadErr := downloadProfileMediaPath(
+		userPrivateOwner(user),
+		user.GetProfileImageUrl(),
+		now,
+		"user_private_profile",
+	)
+	if downloadErr != nil {
+		hlog.Warnf("download current user avatar failed: %v", downloadErr)
+		return nil
+	}
+	return dal.UpdateUserPrivateProfileImagePath(user.GetUserId(), path)
 }
 
 func syncOshiProfiles() error {
 	now := time.Now()
 	syncedCount := 0
+	oshiMediaSummary := MediaSyncSummary{}
+	followingMediaSummary := MediaSyncSummary{}
+	followingCount := 0
 	pageToken := ""
+	defer func() {
+		logMediaSyncSummary("Oshi profile media sync", oshiMediaSummary)
+		logMediaSyncSummary("Following profile media sync", followingMediaSummary)
+	}()
 
 	for page := 0; page < profileMediaMaxPages; page++ {
 		resp, err := rep_api.ListMyOshis(200, pageToken)
@@ -49,7 +84,7 @@ func syncOshiProfiles() error {
 			return err
 		}
 		for _, item := range items {
-			downloadProfileURLSet(oshiOwner(item), oshiMediaURLs(item), now)
+			mergeMediaSummary(&oshiMediaSummary, downloadProfileURLSet(oshiOwner(item), oshiMediaURLs(item), now))
 		}
 		syncedCount += len(items)
 
@@ -60,7 +95,7 @@ func syncOshiProfiles() error {
 		pageToken = nextToken
 	}
 
-	followingCount, err := syncFollowings(now)
+	followingCount, followingMediaSummary, err := syncFollowings(now)
 	if err != nil {
 		return err
 	}
@@ -69,14 +104,15 @@ func syncOshiProfiles() error {
 	return nil
 }
 
-func syncFollowings(now time.Time) (int, error) {
+func syncFollowings(now time.Time) (int, MediaSyncSummary, error) {
 	syncedCount := 0
+	mediaSummary := MediaSyncSummary{}
 	pageToken := ""
 
 	for page := 0; page < profileMediaMaxPages; page++ {
 		resp, err := rep_api.ListFollowings(20, pageToken)
 		if err != nil {
-			return syncedCount, err
+			return syncedCount, mediaSummary, err
 		}
 		items := resp.GetFollowTargets()
 		hlog.Infof(
@@ -86,10 +122,10 @@ func syncFollowings(now time.Time) (int, error) {
 			strings.TrimSpace(resp.GetNextPageToken()) != "",
 		)
 		if err := saveFollowings(items, now); err != nil {
-			return syncedCount, err
+			return syncedCount, mediaSummary, err
 		}
 		for _, item := range items {
-			downloadProfileURLSet(followTargetOwner(item), followTargetMediaURLs(item), now)
+			mergeMediaSummary(&mediaSummary, downloadProfileURLSet(followTargetOwner(item), followTargetMediaURLs(item), now))
 		}
 		syncedCount += len(items)
 
@@ -100,7 +136,7 @@ func syncFollowings(now time.Time) (int, error) {
 		pageToken = nextToken
 	}
 
-	return syncedCount, nil
+	return syncedCount, mediaSummary, nil
 }
 
 func saveOshis(items []*model.ListMyOshisOshi, now time.Time) error {
@@ -176,6 +212,9 @@ func saveUserPrivate(user *model.UserPrivate, now time.Time) error {
 		}
 		if existing.Id > 0 {
 			dbUser.Id = existing.Id
+			if dbUser.ProfileImagePath == "" {
+				dbUser.ProfileImagePath = existing.ProfileImagePath
+			}
 			return db.Save(dbUser).Error
 		}
 		return db.Create(dbUser).Error
@@ -261,6 +300,145 @@ func buildDBUserPrivate(user *model.UserPrivate, now time.Time) *dal.UserPrivate
 	}
 }
 
+func downloadProfileMediaPath(owner, rawURL string, now time.Time, kind string) (string, MediaResult, error) {
+	path, result, err := DownloadProfileMediaWithResult(
+		rawURL,
+		now,
+		filepath.Join(config.GetMediaPath(), "profile"),
+		owner,
+		kind,
+	)
+	if err != nil {
+		return "", MediaFailed, err
+	}
+	storedPath, err := toStoredProfileMediaPath(path)
+	if err != nil {
+		return "", MediaFailed, err
+	}
+	return storedPath, result, nil
+}
+
+func toStoredProfileMediaPath(path string) (string, error) {
+	root, err := filepath.Abs(config.GetMediaPath())
+	if err != nil {
+		return "", err
+	}
+	fullPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(root, fullPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", os.ErrInvalid
+	}
+	return filepath.ToSlash(rel), nil
+}
+
+func resolveStoredProfileMediaPath(storedPath string) string {
+	storedPath = strings.TrimSpace(storedPath)
+	if storedPath == "" {
+		return ""
+	}
+	if filepath.IsAbs(storedPath) {
+		return filepath.Clean(storedPath)
+	}
+	return filepath.Join(config.GetMediaPath(), filepath.FromSlash(storedPath))
+}
+
+func findArchivedProfileMediaPath(owner, rawURL string, now time.Time) string {
+	if strings.TrimSpace(owner) == "" || strings.TrimSpace(rawURL) == "" {
+		return ""
+	}
+	filename, err := getProfileMediaFileName(rawURL)
+	if err != nil {
+		return ""
+	}
+	ownerDir := filepath.Join(config.GetMediaPath(), "profile", sanitizeFileName(owner))
+	year, month := getProfileMediaYearMonth(rawURL, now)
+	candidate := filepath.Join(ownerDir, year, month, filename)
+	if mediaFileExists(candidate) {
+		stored, err := toStoredProfileMediaPath(candidate)
+		if err == nil {
+			return stored
+		}
+	}
+	var found string
+	_ = filepath.WalkDir(ownerDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil || entry == nil {
+			return nil
+		}
+		if !entry.IsDir() && strings.EqualFold(entry.Name(), filename) {
+			found = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if found == "" {
+		return ""
+	}
+	stored, err := toStoredProfileMediaPath(found)
+	if err != nil {
+		return ""
+	}
+	return stored
+}
+
+// BackfillProfileMediaPaths connects profile files downloaded by older builds
+// with the corresponding local database rows. It never downloads anything.
+func BackfillProfileMediaPaths() error {
+	rooms, err := dal.GetChatRooms()
+	if err != nil {
+		return err
+	}
+	for _, room := range rooms {
+		if room == nil || strings.TrimSpace(room.AvatarUrl) == "" {
+			continue
+		}
+		if mediaFileExists(resolveStoredProfileMediaPath(room.AvatarPath)) {
+			continue
+		}
+		path := findArchivedProfileMediaPath(room.DisplayName, room.AvatarUrl, time.Now())
+		if path != "" {
+			if err := dal.UpdateChatRoomAvatarPath(room.ChatRoomId, path); err != nil {
+				return err
+			}
+		}
+	}
+
+	primeRooms, err := dal.GetPrimeChatRooms()
+	if err != nil {
+		return err
+	}
+	for _, room := range primeRooms {
+		if room == nil || strings.TrimSpace(room.TalentAvatarUrl) == "" {
+			continue
+		}
+		if mediaFileExists(resolveStoredProfileMediaPath(room.TalentAvatarPath)) {
+			continue
+		}
+		path := findArchivedProfileMediaPath(room.TalentDisplayName, room.TalentAvatarUrl, time.Now())
+		if path != "" {
+			if err := dal.UpdatePrimeChatRoomTalentAvatarPath(room.ChatRoomId, path); err != nil {
+				return err
+			}
+		}
+	}
+
+	user, err := dal.GetUserPrivate()
+	if err != nil {
+		return err
+	}
+	if user != nil && strings.TrimSpace(user.ProfileImageUrl) != "" && !mediaFileExists(resolveStoredProfileMediaPath(user.ProfileImagePath)) {
+		path := findArchivedProfileMediaPath(user.DisplayName, user.ProfileImageUrl, time.Now())
+		if path != "" {
+			if err := dal.UpdateUserPrivateProfileImagePath(user.UserId, path); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func oshiOwner(item *model.ListMyOshisOshi) string {
 	if item == nil {
 		return "unknown"
@@ -333,7 +511,8 @@ func userPrivateMediaURLs(user *model.UserPrivate) map[string]string {
 	return urls
 }
 
-func downloadProfileURLSet(owner string, urls map[string]string, now time.Time) {
+func downloadProfileURLSet(owner string, urls map[string]string, now time.Time) MediaSyncSummary {
+	mediaSummary := MediaSyncSummary{}
 	owner = firstNonEmpty(owner, "unknown")
 	prefix := filepath.Join(config.GetMediaPath(), "profile")
 	seen := make(map[string]struct{}, len(urls))
@@ -346,10 +525,31 @@ func downloadProfileURLSet(owner string, urls map[string]string, now time.Time) 
 			continue
 		}
 		seen[rawURL] = struct{}{}
-		if _, err := DownloadProfileMedia(rawURL, now, prefix, owner, kind); err != nil {
+		if _, result, err := DownloadProfileMediaWithResult(rawURL, now, prefix, owner, kind); err != nil {
+			mediaSummary.Add(MediaFailed)
 			hlog.Warnf("download profile media failed, owner=%s kind=%s err=%v", owner, kind, err)
+		} else {
+			mediaSummary.Add(result)
 		}
 	}
+	return mediaSummary
+}
+
+func mergeMediaSummary(target *MediaSyncSummary, source MediaSyncSummary) {
+	if target == nil {
+		return
+	}
+	target.Downloaded += source.Downloaded
+	target.Skipped += source.Skipped
+	target.Failed += source.Failed
+}
+
+func logMediaSyncSummary(label string, summary MediaSyncSummary) {
+	if summary.Downloaded == 0 && summary.Failed == 0 {
+		hlog.Infof("%s: downloaded=0 skipped=%d failed=0", label, summary.Skipped)
+		return
+	}
+	hlog.Infof("%s: downloaded=%d skipped=%d failed=%d", label, summary.Downloaded, summary.Skipped, summary.Failed)
 }
 
 func timestampSeconds(ts *model.Timestamp) int64 {

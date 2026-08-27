@@ -2,6 +2,7 @@ package handler
 
 import (
 	"testing"
+	"time"
 
 	"replive/dal"
 )
@@ -20,5 +21,21 @@ func TestBuildChatMessageRespUsesChronologicalCursors(t *testing.T) {
 	}
 	if nextCursor != 2 {
 		t.Fatalf("nextCursor = %d, want chronological newest ID 2", nextCursor)
+	}
+}
+
+func TestLocalDateKeyFromUnixValueUsesSystemTimeZone(t *testing.T) {
+	originalLocation := time.Local
+	time.Local = time.FixedZone("UTC+08", 8*60*60)
+	defer func() { time.Local = originalLocation }()
+
+	seconds := time.Date(2026, 1, 1, 16, 30, 0, 0, time.UTC).Unix()
+	if got := localDateKeyFromUnixValue(seconds); got != "2026-01-02" {
+		t.Fatalf("seconds date key = %q, want 2026-01-02", got)
+	}
+
+	millis := time.Date(2026, 1, 2, 15, 30, 0, 0, time.UTC).UnixMilli()
+	if got := localDateKeyFromUnixValue(millis); got != "2026-01-02" {
+		t.Fatalf("milliseconds date key = %q, want 2026-01-02", got)
 	}
 }

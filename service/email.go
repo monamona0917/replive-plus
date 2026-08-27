@@ -6,6 +6,7 @@ import (
 	"replive/config"
 	"replive/dal"
 	"replive/model"
+	"sync"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/common/hlog"
@@ -18,9 +19,15 @@ var (
 	mailCli      *mail.Client
 	useEmail     bool
 	emailChannel chan *EMailInfo
+	emailInitMu  sync.Mutex
 )
 
 func initEmailSender() {
+	emailInitMu.Lock()
+	defer emailInitMu.Unlock()
+	if emailChannel != nil {
+		return
+	}
 	emailChannel = make(chan *EMailInfo, 1000)
 	if len(config.Conf.Email.SmtpHost) == 0 || len(config.Conf.Email.Sender) == 0 || len(config.Conf.Email.AuthCode) == 0 || len(config.Conf.Email.Receiver) == 0 {
 		useEmail = false
@@ -54,6 +61,7 @@ type EMailInfo struct {
 	Content   string
 	FilePath  string
 	RetryTime int
+	Quiet     bool
 }
 
 func enqueueEmail(info *EMailInfo) bool {
@@ -77,6 +85,7 @@ func sendLiveEmail(liveInfo *model.LiveStream, nsyInfo *model.LiveUser, rtmpUrl 
 	enqueueEmail(&EMailInfo{
 		Title:   fmt.Sprintf("直播开播: %s", nsyInfo.Info.DisplayName),
 		Content: content,
+		Quiet:   true,
 	})
 }
 
@@ -84,6 +93,7 @@ func sendLiveEndEmail(nsyName string, fileName string) {
 	enqueueEmail(&EMailInfo{
 		Title:   fmt.Sprintf("直播结束: %s", nsyName),
 		Content: fmt.Sprintf("fileName: %s\n", fileName),
+		Quiet:   true,
 	})
 }
 
@@ -221,7 +231,9 @@ func sendV2(info *EMailInfo) error {
 	if len(info.FilePath) > 0 {
 		msg.Attach(info.FilePath)
 	}
-	hlog.Infof("发送邮件: %v", info)
+	if !info.Quiet {
+		hlog.Infof("发送邮件: %v", info)
+	}
 	if err := sendCli.DialAndSend(msg); err != nil {
 		hlog.Errorf("发送邮件失败: %v", err)
 		return err
@@ -244,7 +256,9 @@ func sendV1(info *EMailInfo) error {
 	if len(info.FilePath) > 0 {
 		message.AttachFile(info.FilePath)
 	}
-	hlog.Infof("发送邮件: %v", info)
+	if !info.Quiet {
+		hlog.Infof("发送邮件: %v", info)
+	}
 	if err := mailCli.DialAndSend(message); err != nil {
 		hlog.Errorf("发送邮件失败: %v", err)
 		// send next time

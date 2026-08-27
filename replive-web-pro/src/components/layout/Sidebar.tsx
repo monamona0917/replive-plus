@@ -9,6 +9,7 @@ import { cn, formatShortDate } from "../../lib/utils";
 import useChatStore, { roomKey } from "../../stores/chat-store";
 import useSettingsStore from "../../stores/settings-store";
 import type { ChatRoom } from "../../types/chat";
+import Avatar from "../chat/Avatar";
 
 export const Sidebar = () => {
   const activeCategory = useChatStore((s) => s.activeCategory);
@@ -52,7 +53,6 @@ export const Sidebar = () => {
     });
   }, [activeCategory, fandomRooms, primeRooms, messagesByRoom]);
 
-
   const handleRoomClick = (room: ChatRoom) => {
     void selectRoom(room);
     if (window.innerWidth < 768) {
@@ -76,16 +76,19 @@ export const Sidebar = () => {
       )}
     >
       {/* Sidebar Header */}
-      <div className="flex items-center justify-between px-4 py-3.5 border-b border-sidebar-border">
-        <div className="flex items-center min-w-0">
-          {!sidebarCollapsed ? (
+      <div
+        className={cn(
+          "flex items-center py-3.5 border-b border-sidebar-border transition-all",
+          sidebarCollapsed ? "justify-center px-2" : "justify-between px-4",
+        )}
+      >
+        {!sidebarCollapsed && (
+          <div className="flex items-center min-w-0">
             <span className="font-bold text-base text-sidebar-foreground tracking-tight">
               Replive+
             </span>
-          ) : (
-            <span className="font-bold text-sm text-primary">R+</span>
-          )}
-        </div>
+          </div>
+        )}
 
         <button
           type="button"
@@ -156,8 +159,8 @@ export const Sidebar = () => {
       {/* Room List View */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 space-y-1">
         {displayedRooms.length === 0 ? (
-          <div className="py-12 text-center text-xs text-muted-foreground">
-            该专区暂无会话记录
+          <div className="py-12 text-center text-xs text-muted-foreground select-none">
+            暂无聊天对象
           </div>
         ) : (
           displayedRooms.map((room) => {
@@ -206,17 +209,12 @@ export const Sidebar = () => {
 
                 {/* Avatar */}
                 <div className="relative shrink-0">
-                  <img
-                    src={
-                      room.avatarUrl ||
-                      `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(room.displayName)}`
-                    }
-                    alt={room.displayName}
+                  <Avatar
+                    localUrl={room.avatarLocalUrl}
+                    remoteUrl={userProfile?.offlineMode ? undefined : room.avatarUrl}
+                    label={room.displayName}
                     className="w-10 h-10 rounded-full object-cover bg-muted ring-1 ring-border/40"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).src =
-                        "https://api.dicebear.com/7.x/shapes/svg?seed=fallback";
-                    }}
+                    fallbackClassName="text-sm text-muted-foreground"
                   />
                 </div>
 
@@ -248,17 +246,16 @@ export const Sidebar = () => {
       <div className="p-3 border-t border-sidebar-border bg-sidebar/80 backdrop-blur-xs flex items-center justify-between">
         {!sidebarCollapsed ? (
           <div className="flex items-center gap-2.5 min-w-0">
-            <img
-              src={
-                userProfile?.avatarUrl ||
-                "https://api.dicebear.com/7.x/bottts/svg?seed=user_profile"
-              }
-              alt="用户"
-              className="w-8 h-8 rounded-full bg-muted ring-1 ring-border/50 shrink-0"
+            <Avatar
+              localUrl={userProfile?.avatarLocalUrl}
+              remoteUrl={userProfile?.offlineMode ? undefined : userProfile?.avatarUrl}
+              label={userProfile?.displayName || "用户"}
+              className="w-8 h-8 rounded-full bg-muted ring-1 ring-border/50 shrink-0 object-cover"
+              fallbackClassName="text-xs text-muted-foreground"
             />
             <div className="flex flex-col min-w-0">
               <span className="text-xs font-semibold text-foreground truncate">
-                {userProfile?.displayName || "管理员"}
+                {userProfile?.displayName || "？？？"}
               </span>
               <span className="text-[10px] text-muted-foreground truncate">
                 {userProfile?.uniqueId ? `@${userProfile.uniqueId}` : "离线浏览模式"}
@@ -267,13 +264,12 @@ export const Sidebar = () => {
           </div>
         ) : (
           <div className="w-full flex justify-center">
-            <img
-              src={
-                userProfile?.avatarUrl ||
-                "https://api.dicebear.com/7.x/bottts/svg?seed=user_profile"
-              }
-              alt="用户"
-              className="w-8 h-8 rounded-full bg-muted ring-1 ring-border/50"
+            <Avatar
+              localUrl={userProfile?.avatarLocalUrl}
+              remoteUrl={userProfile?.offlineMode ? undefined : userProfile?.avatarUrl}
+              label={userProfile?.displayName || "用户"}
+              className="w-8 h-8 rounded-full bg-muted ring-1 ring-border/50 object-cover"
+              fallbackClassName="text-xs text-muted-foreground"
             />
           </div>
         )}

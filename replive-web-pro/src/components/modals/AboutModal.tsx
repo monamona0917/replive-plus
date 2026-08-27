@@ -31,6 +31,26 @@ export const AboutModal = () => {
         <div className="space-y-4">
           <div className="p-4 rounded-xl bg-muted/40 border border-border/60 space-y-3 text-xs">
             <p className="text-muted-foreground leading-relaxed font-medium">
+              项目地址：
+            </p>
+            <a
+              href="https://github.com/monamona0917/replive-plus"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-between p-2.5 rounded-lg bg-card border border-border/70 text-foreground hover:text-primary hover:border-primary/50 transition-all font-medium group"
+            >
+              <div className="flex flex-col gap-0.5">
+                <span className="font-semibold text-foreground group-hover:text-primary transition-colors">
+                  monamona0917/replive-plus
+                </span>
+                <span className="text-[11px] text-muted-foreground">
+                  すべては、この瞬間のために
+                </span>
+              </div>
+              <ExternalLink className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors shrink-0" />
+            </a>
+
+            <p className="text-muted-foreground leading-relaxed font-medium pt-1">
               本项目基于以下项目进行二次开发/重构筑：
             </p>
             <div className="space-y-2">
@@ -55,7 +75,6 @@ export const AboutModal = () => {
               </a>
             </div>
           </div>
-
         </div>
 
         {/* Footer */}
