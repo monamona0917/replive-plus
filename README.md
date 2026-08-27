@@ -4,7 +4,7 @@
 
 详细使用说明参照原项目nsy_chat_live中提供的 https://my.feishu.cn/wiki/PXe9wkiksifZR9kpVoucsKs1nQe
 
-### 具体修改内容
+### 主要修改内容
 
 - 重构 Web 前端，支持消息发送，可在 `config.yaml` 中通过 `send_chat: true/false` 开启或关闭。
 - 支持显示Fandom已读状态。
