@@ -1,0 +1,169 @@
+syntax = "proto3";
+package model;
+option go_package = "./model";
+
+message RefreshAccessTokenRequest {
+  string refresh_token = 1;
+}
+
+message RefreshAccessTokenResponse {
+  string accessToken = 1;
+  Timestamp accessTokenExpireTime = 2;
+}
+
+message Timestamp {
+  int64 seconds = 1;
+  int64 nanos = 2;
+}
+
+message ListChatRoomsRequest {
+  int64 max_page_size = 1;
+}
+
+message ChatRoom {
+  string user_id = 1;
+  string chat_room_id = 2;
+  UserProfile user_profile = 3;
+  // 其他的用不上
+}
+
+message ListChatRoomsResponse {
+  repeated ChatRoom chat_rooms = 1;
+}
+
+message ListChatMessagesRequest {
+  string user_id = 1;
+  string chat_room_id = 2;
+  int32 max_page_size = 3;
+  string cursor_chat_message_id = 4;
+  bool backward = 5;
+}
+
+enum ChatMessageType {
+  Unknown = 0;
+  Text = 1;
+  Image = 2;
+  Video = 3;
+}
+
+message ListChatMessages {
+  string user_id = 1;
+  string chat_room_id = 2;
+  string chat_message_id = 3;
+  UserProfile user_profile = 4;
+  int32 type = 5;
+  string content = 6;
+  string image_url = 7;
+  string video_url = 8;
+  Timestamp timestamp = 100;
+  string time_str = 200;
+}
+
+message UserProfile {
+  string user_id = 1;
+  string unique_id = 2;
+  string display_name = 3;
+  string avatar_url = 4;
+//  // deepseek 猜测, 全都不要
+//  bool is_verified = 5;             // 认证状态
+//  bool is_active = 7;               // 活跃状态
+//  string bio = 12;                  // 个人简介 (多行文本)
+//  string media_url = 13;             // 媒体URL
+//  bool is_media_visible = 14;        // 媒体可见性
+//  string status_text = 15;           // 状态文本
+//  Timestamp profile_timestamp = 16;  // 资料更新时间
+//  int32 badge_count = 17;            // 徽章数量
+//  string thumbnail_url = 18;         // 缩略图URL
+//  bool is_thumbnail_visible = 19;    // 缩略图可见性
+//  bool is_online = 20;               // 在线状态
+//  string fandom_name = 21;              // 昵称
+//  string session_id = 22;            // 会话ID
+//  bool is_blocked = 23;              // 屏蔽状态
+}
+
+message ListChatMessagesResponse {
+  repeated ListChatMessages messages = 1;
+  string next_page_cursor_message_id = 4;
+}
+
+message GetChatRoomRequest {
+  string user_id = 1;
+  string chat_room_id = 2;
+}
+
+//message GetChatRoomResponse {
+//  string
+//}
+
+message CheckStreamLiveRequest {
+}
+
+message CheckStreamLiveResponse {
+  int32 field1 = 1;
+  int32 field2 = 2;
+  repeated LiveStream live_info = 3;
+  repeated LiveUser user_profile = 4;
+}
+
+message LiveStream {
+  string live_id = 1;
+  string user_id = 2;
+  int32 stream_status = 3;
+  string title = 4;
+  string webrtc_url = 13;
+}
+
+message LiveUser {
+  string id = 1;
+  UserProfile info = 2;
+}
+
+enum IdProvider {
+  ID_PROVIDER_UNSPECIFIED = 0;
+  ID_PROVIDER_PHONE_NUMBER = 1;
+  ID_PROVIDER_APPLE = 2;
+  ID_PROVIDER_LINE = 3;
+  ID_PROVIDER_TWITTER = 4;
+  ID_PROVIDER_GOOGLE = 5;
+  ID_PROVIDER_FACEBOOK = 6;
+}
+
+message GetSNSLoginURLRequest {
+  IdProvider id_provider = 1;
+  string state = 2;
+  string code_challenge = 3;
+}
+
+message GetSNSLoginURLResponse {
+  string login_url = 1;
+}
+
+message UserAuthBySNSRequest {
+  IdProvider id_provider = 1;
+  string oauth_token = 2;
+  string oauth_verifier = 3;
+  string code_verifier = 4;
+  string id_token = 5;
+  string raw_nonce = 6;
+  string access_token = 7;
+}
+
+message UserPrivate {
+  string user_id = 1;
+  string unique_id = 2;
+  string display_name = 3;
+  string profile_image_url = 4;
+  reserved 5 to 21, 31 to 39, 41 to 43, 45 to 54;
+  string profile_background_image_url = 40;
+  string sm_profile_image_url = 44;
+}
+
+message UserAuthBySNSResponse {
+  bool need_signup = 1;
+  string signup_token = 2;
+  UserPrivate user = 3;
+  string access_token = 4;
+  string refresh_token = 5;
+  Timestamp access_token_expire_time = 6;
+  bool is_unretirable = 7;
+}

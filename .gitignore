@@ -1,0 +1,34 @@
+﻿.idea
+chat.exe
+chat
+*.db
+*.log
+*.json
+# The current Vite frontend needs its project metadata in source control.
+!replive-web-pro/package.json
+!replive-web-pro/package-lock.json
+!replive-web-pro/tsconfig.json
+!replive-web-pro/tsconfig.app.json
+!replive-web-pro/tsconfig.node.json
+*.exe
+replive
+main
+*.mp4
+*.jpeg
+*.jpg
+*.png
+
+!replive-web-pro/src/components/chat/
+!replive-web-pro/src/components/chat/**
+# New Vite frontend generated directories. Dependencies are restored from
+# replive-web-pro/package-lock.json; production files are built into dist.
+replive-web-pro/node_modules/
+replive-web-pro/dist/
+dist/
+.gocache/
+# Local AI files and generated dependencies
+plan/
+agents.md
+AGENTS.md
+.codex-go-cache-review/
+vendor/
