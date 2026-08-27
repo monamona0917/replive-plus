@@ -215,4 +215,3 @@ func file_model_chat_send_proto_init() {
 	file_model_chat_send_proto_goTypes = nil
 	file_model_chat_send_proto_depIdxs = nil
 }
-
