@@ -6,10 +6,10 @@
 
 ### 具体修改内容
 
-- 重构Web 前端，支持发送消息（在config.yaml中选择开启;send_chat: false/true)
+- 重构 Web 前端，支持消息发送，可在 `config.yaml` 中通过 `send_chat: true/false` 开启或关闭。
 - 支持显示Fandom已读状态。
-- 显示 Fandom 订阅天数及对应阶段样式。显示账号可输入字符上限。
-- 新增 Prime Chat
+- 支持显示 Fandom 订阅天数及当前订阅天数的可输入字符上限。
+- 新增 Prime Chat。
 
 ## 构建与运行（Windows）
 
