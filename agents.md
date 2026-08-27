@@ -1,50 +1,70 @@
-# replive-plus 仓库指南
+# Agents 指南
 
-## 项目结构与模块组织
+本仓库包含两个相关应用：
 
-本项目名称为 `replive-plus`。仓库根目录是 Go/Hertz 后端，包含 SQLite 持久化和本地同步逻辑。核心包按职责划分：`api/` 负责 HTTP/API 接线，`handler/` 负责请求处理，`service/` 负责业务逻辑，`dal/` 负责数据库模型和持久化，`rep_api/` 负责 Replive API 客户端与解析器，`utils/` 放共享工具。`config/`、`login/` 和 `model/` 存放支持性运行时及领域代码；`cmd/replive-live-recorder/` 保留为独立的直播轮询与录像兼容入口，主后端也会在启动后后台开启直播监听与录像。
+- 仓库根目录是 Go/Hertz 后端：负责登录 Replive、同步 chat room/chat message/media 元数据到 SQLite，自动监听直播并录制视频，并提供本地 HTTP API。
+- `replive-web/` 是 React/Vite 前端：负责渲染类似 Replive 的聊天页面。
 
-当前 Web 前端为 `replive-web-pro/`（React/Vite）。构建产物位于 `dist/`，计划和项目交接文档位于 `plan/`。
+所有 AI agent 在实现功能前必须先阅读 `plan/README.md`。除非用户明确变更范围，否则以 `plan/` 里的计划作为执行约束。
 
-## 构建、测试与开发命令
+## 原始 app
+本仓库基于原始 app 的解包 `C:\Users\hwg2529\soft\src\replive_app_unpack` 而做。
 
-- `go build -mod=vendor -o dist/replive-plus.exe .`：构建主后端可执行文件。
-- `go build -mod=vendor -o dist/replive-plus-web.exe ./replive-web-pro`：构建带 Web 的可执行文件。
-- `go build -mod=vendor -o dist/replive-live-recorder.exe ./cmd/replive-live-recorder`：构建独立直播录像进程。
-- `go test -mod=vendor ./...`：运行全部后端测试。
-- `cd replive-web-pro && npm install`：安装当前 Web UI 的依赖。
-- `cd replive-web-pro && npm run build`：构建生产前端资源。
+## 工作规则
 
-涉及本项目时统一使用 `replive-plus`，构建产物使用 `replive-plus.exe` 和 `replive-plus-web.exe`。以本节列出的 Go 与 Vite 命令作为默认构建方式。`build.sh`、`build_mac.sh`、`bootstrap_rep.sh` 与 `stop.sh` 尚未确认过时，但也不是默认工作流。
+- 修改前先看 `git status --short`，不要覆盖用户已有改动。
+- 搜索文件和文本优先用 `rg` / `rg --files`。
+- 手工改文件必须用 `apply_patch`。
+- 不要执行破坏性命令，例如 `git reset --hard`、`git checkout --`、`rm`，除非用户明确要求。
+- 后端默认保持无 CGO 构建，使用 `CGO_ENABLED=0`。
+- 前端展示 chat 图片/视频时，不要新增本地媒体服务器路径。应直接使用 SQLite 里保存的原始 `image_url` / `video_url`，除非用户明确改变这个决定。
+- 调用 replive 的 http 接口的工作方式是：基于解包明确proto协议、生成proto代码，参考已有的http请求复用 rep_api 的流程和使用proto生成的结构体进行调用。
+- agent 工作时优先使用中文。
 
-主后端会在 `service.Init()` 完成后后台轮询直播状态并启动 ffmpeg 录像；独立运行 `replive-live-recorder.exe` 仍然可用。两者复用同一份 `config.yaml`，且必须先完成登录。
+## 全局编译验证
+```powershell
+build_all.bat
+```
 
-中国网络环境优先使用 `GOPROXY=https://goproxy.cn,direct` 和 `GOSUMDB=sum.golang.google.cn`。根目录已有 `vendor/`，优先使用 `-mod=vendor`，避免依赖网络下载。
+## 后端结构
 
-## 代码风格与命名
+- SQLite schema 和 DB 访问在 `dal/`。
+- HTTP handler 在 `handler/`。
+- Replive API client 在 `rep_api/`。
+- 同步 chat/live/media 的业务逻辑在 `service/`。
+- `main.go` 负责启动流程、登录准备、DB 初始化、worker 启动和路由注册。
+- 现有 chat handler 可复用：
+  - `HandleGetChatRooms`
+  - `HandleGetChatMessages`
+  - 历史本地媒体 handler 仍存在，但一般不要使用它。
 
-Go 代码使用 `gofmt` 格式化；包名保持简短、符合 Go 惯例，只为公共 API 导出标识符。GORM 推断可能偏离既有 SQLite schema 时，特别是时间字段，必须明确声明数据库列名。
+## 前端结构
 
-React/Vite 代码遵循 `replive-web-pro/` 现有 TypeScript 风格：组件使用 PascalCase，函数和变量使用 camelCase，房间和聊天状态以房间标识为键，避免跨房间串状态。当前 UI 开发只在 `replive-web-pro/` 进行。
+- `replive-web/` 使用 React 19、Vite、Zustand、Tailwind/shadcn 风格组件、Biome 和 Bun。
+- 主要聊天 UI 文件：
+  - `replive-web/src/components/chat/ChatPage.tsx`
+  - `replive-web/src/components/chat/ChatList.tsx`
+  - `replive-web/src/components/chat/MessageBubble.tsx`
+  - `replive-web/src/stores/chat-store.ts`
+  - `replive-web/src/utils/fetch-data.ts`
+  - `replive-web/src/types/chat.ts`
+- 除非计划明确要求重设计，否则保持现有视觉风格。
 
-## 测试指南
+## 验证命令
 
-Go 测试与被测包放在同一目录，文件名使用 `*_test.go`。优先覆盖解析器、数据库迁移、分页和消息排序。前端变更后运行 `npm run build`；仅在项目已有匹配测试设施时再补充组件或工具测试。
+后端：
 
-## 提交与 Pull Request 指南
+```bash
+env GOCACHE=/private/tmp/replive-go-build CGO_ENABLED=0 /Users/bytedance/go/bin/go1.24.10 test ./...
+env GOCACHE=/private/tmp/replive-go-build CGO_ENABLED=0 /Users/bytedance/go/bin/go1.24.10 build -o /private/tmp/replive-build-check .
+```
 
-提交信息使用简短的祈使句，例如 `fix fandom message ordering` 或 `add prime timing fields`。尽量让每个提交只包含一个行为变更。Pull Request 应说明用户可见变更、受影响的前后端区域、SQLite schema 变动，并为可见 UI 变更附上截图。
+前端：
 
-## Agent 专项规则
+```bash
+cd replive-web
+bun run lint
+bun run build
+```
 
-修改前先执行 `git status --short`，保留无关的用户改动。不要覆盖 `dist/` 中无关的可执行文件；当前默认构建产物是 `replive-plus.exe` 和 `replive-plus-web.exe`。
-
-Prime 聊天时间字段在受控测试验证前仅可作为诊断信息；不得将其表述为已读回执，也不得据此增加已读 UI。除非用户明确要求，否则不要调用 Prime 的已读状态更新接口。Prime 使用远程原始媒体 URL；Fandom 可优先使用本地媒体 URL，失败后只回退一次到远程原始 URL。
-
-Fandom 聊天状态必须按 `roomKey` 隔离。不要只依据 SQLite `user_id` 判断消息方向，因为它可能指向主播；除非受控测试确认更可靠来源，否则沿用既有的显示名称判定逻辑。
-
-实现功能变更前，先阅读 `AGENTS.md` 以及与本次任务相关的最新交接或计划文档。历史计划可能包含已删除旧版前端的引用；以当前源码和当前行为为准。
-
-Spend time on thinking; you do not need to use the commentary channel to report progress to me.
-
-DO NOT send optional commentary.
+如果因为本地工具缺失、沙箱限制或网络限制导致命令不能运行，需要在最终回复里明确说明。

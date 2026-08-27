@@ -1,19 +1,6 @@
-# Chat UI 多房间、游标分页与翻译开发计划
+﻿# Chat UI 多房间、游标分页与翻译开发计划
 
 ## 当前补充（2026-08-11）
-
-### Fandom 房间已读时间字段验证（2026-08-12）
-
-- 本阶段只增加后端采集、SQLite 持久化和同步日志，不增加前端“已读”展示，也不改 Prime Chat。
-- 仅采集 `ListChatRooms` 返回的逐房间服务端字段 `talent_last_check_time`，保存为 Unix 秒并在每次房间同步时输出可读日志。`last_check_chat_message_create_time` 是当前账号最后发送消息的时间，不再采集、保存或输出。
-- `latest_chat_room_join_time` 是 `ListChatRoomsRequest` 的本客户端请求游标；本次请求未传值时日志必须明确显示为未设置，不能将它当作对方访问聊天室的时间。
-- 日志用于在官方客户端实际打开/未打开房间后，比对两个服务端字段的变化，之后再决定已读 UI 依据。
-
-### Prime Chat 已读时间采集（2026-08-13）
-
-- Prime Chat 保持独立同步与数据表，不影响“未订阅 Fandom 也可使用 Prime Chat”的既有能力。
-- 从 `ListPrimeChatRooms` 的房间响应采集主播侧 `user_last_check_time`（字段 100）与会员侧 `member_user_last_check_time`（字段 101），均以 Unix 毫秒保存并通过本地 Prime 房间接口返回。字段 101 仅用于诊断对照，不能视为对方进入或已读时间。
-- 仅对 `prime_chat_rooms.talent_user_id` 同时存在于当前账号 Fandom `chat_rooms.user_id` 的房间输出 Prime 已读时间日志；该交集由 SQLite 动态查询，不写死用户 ID、名称或配置名单。
 
 当前实际前端为 `replive-web-pro/`，本阶段仅处理进入房间后的消息列表底部定位与媒体首屏加载：
 
@@ -329,37 +316,3 @@ export interface Message {
 - 搜索是否暂时只搜索已加载消息，还是要新增后端搜索接口？
 - room 切换列表按什么顺序展示：插入顺序、字母顺序，还是最近消息时间？
 
-## 当前实现补充（2026-08-18）
-
-本节是当前源码的权威记录；前面的章节保留原始计划、建议接口、数据模型、验收标准和未决问题，不能删除。若前后冲突，以本节、源码和当天交接文件为准。
-
-### 当前源码和数据流
-
-- 当前 Web 目录是 replive-web-pro/，主要文件为 src/stores/chat-store.ts、src/components/chat/ChatList.tsx、src/components/chat/MessageBubble.tsx、src/components/drawers/MediaGalleryDrawer.tsx、src/components/modals/MediaLightbox.tsx、src/utils/fetch-data.ts 和 src/types/chat.ts。
-- Fandom/Prime 房间、消息、搜索、日期接口已经分别接入本地 SQLite；房间状态、消息、媒体列表、翻译状态必须按 roomKey 隔离。
-- Fandom 消息方向必须用 message.senderName !== room.displayName；Prime 使用结构化 sender。Fandom 图片/视频优先后端 /media/... 本地地址，失败后只回退一次远程 URL；Prime 不接入本地媒体映射。
-- /api/chat/messages 和 /api/prime/messages 的响应包含 next_cursor_id、prev_cursor_id、has_older、has_newer、anchor_id。排序使用时间字段加 id，避免只按 SQLite 自增 ID。
-
-### 当前跳转实现
-
-- 日期跳转在请求开始时立即设置 JumpTarget(roomKey, requestId) 和 roomEpoch，暂停自动分页、首次贴底和轮询覆盖。内存已有目标日期时直接定位，否则调用 around，未命中再沿 older 游标向前加载，每页 100 条。
-- 相册/搜索跳转先调用 around，通过后端数组中的 backendId 找到权威 Message；随后沿 newer 游标每页 100 条补齐到 hasNewer=false，所以目标之后可以继续向下浏览到最新消息。
-- 两种流程都检查房间代次、requestId、空页、重复游标和游标不前进；不再使用前端固定 200 页上限。后端 service/chat.go 仍有 maxChatMessagePages=200 的历史同步保护，两者不是同一限制。
-- handler/chat_handler.go 和 handler/prime_chat_handler.go 的 around 返回 anchor 前后窗口并保证 anchor 在页内；Fandom 日期查询兼容秒级 send_time、毫秒级 send_time 和 time_str。
-- ChatList 使用 MutationObserver 等待目标 DOM，按 data-backend-id/消息 ID/日期分组锚点定位；用 ResizeObserver 在图片解码撑高时补偿居中。定位成功后目标气泡浅蓝色高亮约 1.5 秒，再按 requestId 释放锁；失败复用 ChatContainer 的 error banner。
-- “加载后续较新消息”按钮和触底自动 newer 已移除，因为相册/搜索跳转会自动补齐最新消息；普通浏览仍可向上加载 older。前端 Fandom 新消息轮询为 15 秒，hasNewer=true 的历史窗口暂停轮询。
-
-### 当前媒体、已读和时间
-
-- 聊天图片和相册缩略图不使用原生 loading=lazy；相册首批有限渲染并限制图片并发。聊天和相册视频使用 metadata 预加载，但视频首帧、video_thumbnail_url/poster 和 CDN 黑屏仍需实测。
-- 后端启动时会按消息 ID、远程文件名和归档目录回填旧 Fandom 媒体路径。前端本地文件 404 时只回退一次远程原图。
-- Go 和前端统一 Asia/Tokyo。Fandom talent_last_check_time（ListChatRooms 未知字段 101）用于 Fandom 我方消息的 既読显示。Prime 字段 100/101 只作诊断，不能制作 Prime 已读 UI。
-- scheduled_chat_message、定时发送和付费 card 已删除；直播轮询/ffmpeg 只在 cmd/replive-live-recorder/ 独立进程运行。
-
-### 当前回归重点
-
-用户重新构建后验证：切换 Fandom/Prime 是否串状态；含大量历史图片的房间是否持续贴底且主动上滑后不被拉回；日期、关键词、相册三种跳转是否准确居中并能继续下拉到最新；本地媒体失败是否只回退一次；聊天和相册视频是否显示首帧；日本时间跨日时日期分组和跳转是否一致。
-
-### 当前文档维护规则
-
-每次行为、分页协议、数据库字段、媒体路径、轮询或构建方式变化后，同时更新本文件和当天命名的 plan/project-handoff-YYYY-MM-DD.md，并在 plan/README.md 指向最新日期。旧交接文件作为历史快照保留，历史计划中的 replive-web、只使用远程媒体等文字必须标明历史，不能覆盖当前源码事实。
