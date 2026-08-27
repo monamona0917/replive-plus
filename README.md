@@ -18,7 +18,3 @@
 - `replive-plus.exe`：后端
 - `replive-plus-web.exe`：内置 Web 前端
 
-先启动 `replive-plus.exe` 完成首次配置和登录，再启动 `replive-plus-web.exe`。后者默认会打开浏览器；需要直播录制时，还需安装 `ffmpeg` 或在 `config.yaml` 中配置其路径。
-
-`build.bat` 是构建脚本，需要 Go 和 Node.js 环境。
-
