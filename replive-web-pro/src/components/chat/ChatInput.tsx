@@ -80,7 +80,7 @@ export const ChatInput = () => {
             {isPrimeChat
               ? "Prime Chat 仅支持查看，暂不支持发送消息。"
               : isOffline
-                ? "将以离线模式运行，仅浏览本地聊天记录。"
+                ? "正以离线模式运行，仅浏览本地聊天记录。"
                 : "消息发送功能已在配置中禁用"}
           </span>
         </div>

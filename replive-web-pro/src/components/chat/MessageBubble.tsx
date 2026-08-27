@@ -128,10 +128,12 @@ export const MessageBubble = memo(
             )}
           </div>
 
-          {/* Bubble Box */}
-          <div
-            className={cn(
-              "relative rounded-2xl shadow-xs transition-shadow overflow-hidden",
+          {/* Bubble + Reaction Container */}
+          <div className="relative max-w-full flex flex-col">
+            {/* Bubble Box */}
+            <div
+              className={cn(
+                "relative rounded-2xl shadow-xs transition-shadow overflow-hidden",
               isMine
                 ? "bg-primary text-primary-foreground"
                 : "bg-card text-card-foreground border border-border/50",
@@ -211,17 +213,13 @@ export const MessageBubble = memo(
               )}
           </div>
 
-          {/* Reaction Emoji (Prime Chat) */}
-          {message.reactionEmoji && (
-            <div
-              className={cn(
-                "mt-0.5 text-sm select-none",
-                isMine ? "self-end" : "self-start",
-              )}
-            >
-              <span>{message.reactionEmoji}</span>
-            </div>
-          )}
+            {/* Reaction Emoji (Prime Chat) */}
+            {message.reactionEmoji && (
+              <div className="pt-1 text-[15px] select-none pl-3.5 flex justify-start">
+                <span>{message.reactionEmoji}</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );

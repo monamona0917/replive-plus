@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/hlog"
 	"github.com/cloudwego/hertz/pkg/common/utils"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 )
@@ -38,6 +40,7 @@ func main() {
 	dataDirFlag := flag.String("data-dir", "", "force offline mode with a directory containing sqlite.db, config.yaml and media")
 	noOpen := flag.Bool("no-open", false, "do not open browser after start")
 	flag.Parse()
+	hlog.SetLevel(hlog.LevelInfo)
 
 	distFS, err := fs.Sub(distEmbedFS, "dist")
 	if err != nil {
@@ -75,17 +78,28 @@ func main() {
 	registerOfflineRoutes(h, distFS)
 
 	pageURL := "http://" + *listenAddr + "/"
+	serverDone := make(chan struct{})
+	go func() {
+		h.Spin()
+		close(serverDone)
+	}()
+	if !waitForHertzReady(h, pageURL, serverDone, 5*time.Second) {
+		select {
+		case <-serverDone:
+			return
+		default:
+			log.Printf("本地 Web 服务启动较慢，请稍后手动访问 %s", pageURL)
+		}
+	}
 	if !*noOpen {
-		go func() {
-			if err := openBrowser(pageURL); err != nil {
-				log.Printf("打开浏览器失败，请手动访问 %s: %v", pageURL, err)
-			}
-		}()
+		if err := openBrowser(pageURL); err != nil {
+			log.Printf("打开浏览器失败，请手动访问 %s: %v", pageURL, err)
+		}
 	}
 
 	fmt.Printf("Replive+ Web 前端已启动: %s\n", pageURL)
 	fmt.Printf("离线浏览数据目录: %s\n", dataDir)
-	h.Spin()
+	<-serverDone
 }
 
 func backendReachable(rawURL string) bool {
@@ -118,18 +132,86 @@ func runBackendProxy(listenAddr, rawBackendURL string, distFS fs.FS, noOpen bool
 	})
 
 	pageURL := "http://" + listenAddr + "/"
-	if !noOpen {
-		go func() {
-			if err := openBrowser(pageURL); err != nil {
-				log.Printf("打开浏览器失败，请手动访问 %s: %v", pageURL, err)
+	listener, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		log.Fatalf("启动本地 Web 服务失败: %v", err)
+	}
+	httpServer := &http.Server{Handler: mux}
+	serverDone := make(chan error, 1)
+	serverStopped := make(chan struct{})
+	go func() {
+		serverDone <- httpServer.Serve(listener)
+		close(serverStopped)
+	}()
+	if !waitForHTTPReady(pageURL, serverStopped, 5*time.Second) {
+		select {
+		case err := <-serverDone:
+			if err != http.ErrServerClosed {
+				log.Fatalf("本地 Web 服务启动失败: %v", err)
 			}
-		}()
+			return
+		default:
+			log.Printf("本地 Web 服务启动较慢，请稍后手动访问 %s", pageURL)
+		}
+	}
+	if !noOpen {
+		if err := openBrowser(pageURL); err != nil {
+			log.Printf("打开浏览器失败，请手动访问 %s: %v", pageURL, err)
+		}
 	}
 
 	fmt.Printf("Replive+ Web 前端已启动: %s\n", pageURL)
 	fmt.Printf("后端 API 代理: %s\n", backend.String())
-	if err := http.ListenAndServe(listenAddr, mux); err != nil {
+	if err := <-serverDone; err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
+	}
+}
+
+func waitForHertzReady(h *server.Hertz, rawURL string, done <-chan struct{}, timeout time.Duration) bool {
+	if !waitForListener(h, done, timeout) {
+		return false
+	}
+	return waitForHTTPReady(rawURL, done, timeout)
+}
+
+func waitForListener(h *server.Hertz, done <-chan struct{}, timeout time.Duration) bool {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if h.IsRunning() {
+			return true
+		}
+		select {
+		case <-done:
+			return false
+		case <-ticker.C:
+		case <-deadline.C:
+			return false
+		}
+	}
+}
+
+func waitForHTTPReady(rawURL string, done <-chan struct{}, timeout time.Duration) bool {
+	client := &http.Client{Timeout: 200 * time.Millisecond}
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		response, err := client.Get(rawURL)
+		if err == nil {
+			_ = response.Body.Close()
+			return true
+		}
+		select {
+		case <-done:
+			return false
+		case <-ticker.C:
+		case <-deadline.C:
+			return false
+		}
 	}
 }
 
@@ -242,7 +324,7 @@ func serveFrontend(c *app.RequestContext, distFS fs.FS) {
 }
 
 func serveFrontendHTTP(w http.ResponseWriter, r *http.Request, distFS fs.FS) {
-	filePath := strings.TrimPrefix(filepath.ToSlash("/"+r.URL.Path), "/")
+	filePath := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
 	if filePath == "." || filePath == "" {
 		filePath = "index.html"
 	}
