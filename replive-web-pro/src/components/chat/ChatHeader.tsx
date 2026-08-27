@@ -13,7 +13,6 @@ import Avatar from "./Avatar";
 export const ChatHeader = () => {
   const selectedRoom = useChatStore((s) => s.selectedRoom);
   const userProfile = useChatStore((s) => s.userProfile);
-  const mediaList = useChatStore((s) => s.mediaList);
   const setSearchDrawerOpen = useChatStore((s) => s.setSearchDrawerOpen);
   const setMediaGalleryDrawerOpen = useChatStore(
     (s) => s.setMediaGalleryDrawerOpen,
@@ -79,13 +78,10 @@ export const ChatHeader = () => {
           type="button"
           onClick={() => setMediaGalleryDrawerOpen(true)}
           disabled={!selectedRoom}
-          className="relative inline-flex items-center justify-center p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/80 disabled:opacity-40 transition-colors"
+          className="inline-flex items-center justify-center p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/80 disabled:opacity-40 transition-colors"
           title="相册"
         >
           <Images className="w-4 h-4" />
-          {mediaList.length > 0 && (
-            <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-primary ring-2 ring-background" />
-          )}
         </button>
 
         {/* Search Drawer Button */}
